@@ -1,0 +1,43 @@
+# Visual Studio build folders
+.vs/
+Debug/
+Release/
+x64/
+x86/
+out/
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.VC.db
+*.opendb
+*.idb
+*.pdb
+
+# Intermediate files
+*.obj
+*.tlog
+*.log
+*.cache
+
+# Backup / Temp
+*.tmp
+*.bak
+
+# System / OS files
+Thumbs.db
+Desktop.ini
+
+# Ignore Visual Studio indexes
+.vscode/
+*.ipch
+*.db
+*.db-shm
+*.db-wal
+*.VC.opendb
+DocumentLayout.json
+
+# Build output
+*.exe

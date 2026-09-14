@@ -1,0 +1,13 @@
+RecipientName,FoodType,Quantity,OrganizationType,OrganizationName,Location,PriorityLevel,IsFulfilled,RequestDate
+meesha,Daal,3,HOSPITAL,shoukat khanum,Korangi,1,1,12/12/2025
+shanzay,Rice,10,OLDAGE HOME,jdc,Gulshan-e-Iqbal,2,1,12/14/2025
+faisal,Daal,5,HOSPITAL,indus hospital,Korangi,1,1,12/14/2025
+hafsa,Daal,4,HOSPITAL,patel hospital,Gulshan-e-Iqbal,1,1,12/14/2025
+,,,,,,,,
+,,,,,,,,
+Daal,Daal,21,HOSPITAL,IDK,Clifton,1,1,2023-12-02
+a,Daal,10,HOSPITAL,b,Gulshan-e-Iqbal,1,1,2024-12-02
+idk,Daal,10,HOSPITAL,idk,Gulshan-e-Iqbal,1,1,2024-01-01
+da,Daal,10,HOSPITAL,idk,Korangi,1,1,2024-01-01
+idk,Chips,20,HOSPITAL,idk,Saddar,1,1,2025-12-16
+idk,Daal,10,HOSPITAL,idk,Gulshan-e-Iqbal,1,1,2023-01-01

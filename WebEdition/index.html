@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Food Redistribution System — Dispatch</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#FBF5EA;
+    --paper:#FFFFFF;
+    --paper-soft:#FFF9EF;
+    --border:#EDE1CC;
+    --ink:#2E2620;
+    --ink-soft:#6B5F4F;
+    --muted:#9C8F7B;
+
+    --terracotta:#E2683B;
+    --terracotta-deep:#C24F26;
+    --leaf:#4C8B5D;
+    --leaf-deep:#396B47;
+    --sun:#E3A537;
+    --sun-deep:#B9821E;
+    --berry:#B8456A;
+    --sky:#3D8FA6;
+
+    --font-head:'Fraunces', Georgia, serif;
+    --font-ui:'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono:'Space Mono', ui-monospace, monospace;
+
+    --shadow-sm: 0 1px 2px rgba(46,38,32,.05), 0 1px 1px rgba(46,38,32,.04);
+    --shadow-md: 0 6px 20px rgba(46,38,32,.08), 0 2px 6px rgba(46,38,32,.05);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--cream); color:var(--ink); font-family:var(--font-ui);
+    display:flex; min-height:100vh;
+  }
+  a{color:inherit;}
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    width:250px; flex-shrink:0; background:var(--paper); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; padding:30px 0;
+    position:sticky; top:0; height:100vh;
+  }
+  .brand{ padding:0 26px 26px; display:flex; align-items:center; gap:11px; }
+  .brand-mark{ width:36px; height:36px; border-radius:10px; flex-shrink:0; background:linear-gradient(135deg, var(--terracotta), var(--terracotta-deep)); display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-sm); }
+  .brand-mark svg{ color:#FFF6EC; }
+  .brand-name{ font-family:var(--font-head); font-size:20px; font-weight:600; line-height:1.25; color:var(--ink); }
+
+  nav{ display:flex; flex-direction:column; margin-top:10px; gap:2px; padding:0 14px; }
+  .nav-item{
+    padding:11px 14px; font-size:14.5px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+    border-radius:10px; transition:color .15s, background .15s;
+    user-select:none; display:flex; align-items:center; gap:10px;
+  }
+  .nav-item .ico{ display:inline-flex; opacity:.8; flex-shrink:0; }
+  .nav-item .ico svg{ display:block; }
+  .nav-item:hover{ color:var(--ink); background:var(--paper-soft); }
+  .nav-item.active{ color:var(--terracotta-deep); background:#FBE7DA; }
+
+  .conn{
+    margin-top:auto; padding:16px 26px 0; font-size:12.5px; color:var(--muted); font-weight:600;
+    display:flex; align-items:center; gap:8px; border-top:1px solid var(--border); padding-top:16px;
+  }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  .dot.live{ background:var(--leaf); box-shadow:0 0 0 4px rgba(76,139,93,.16); }
+  .dot.dead{ background:var(--terracotta); box-shadow:0 0 0 4px rgba(226,104,59,.16); }
+
+  /* ---------- Main ---------- */
+  main{ flex:1; padding:40px 52px; max-width:1160px; }
+  .page{ display:none; }
+  .page.active{ display:block; animation:fade .25s ease; }
+  @keyframes fade{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;} }
+
+  h1{ font-family:var(--font-head); font-size:32px; font-weight:600; margin:0 0 6px; color:var(--ink); }
+  .page-sub{ color:var(--ink-soft); font-size:14.5px; margin:0 0 32px; max-width:62ch; line-height:1.6; }
+
+  /* Stat cards */
+  .stat-row{ display:flex; gap:16px; margin-bottom:36px; flex-wrap:wrap; }
+  .stat{
+    min-width:150px; flex:1; background:var(--paper); border:1px solid var(--border); border-radius:16px;
+    padding:18px 20px; box-shadow:var(--shadow-sm);
+  }
+  .stat-num{ font-family:var(--font-head); font-size:34px; font-weight:600; line-height:1; }
+  .stat-num.urgent{ color:var(--terracotta); }
+  .stat-num.pending{ color:var(--sun-deep); }
+  .stat-num.ok{ color:var(--leaf); }
+  .stat-num.sky{ color:var(--sky); }
+  .stat-label{ font-size:12.5px; color:var(--muted); margin-top:8px; font-weight:600; }
+
+  hr.rule{ border:none; border-top:1px solid var(--border); margin:32px 0; }
+
+  section.block{ margin-bottom:36px; }
+  .block-title{ font-family:var(--font-head); font-size:18px; font-weight:600; margin-bottom:14px; color:var(--ink); }
+
+  /* Log list */
+  .log-item{
+    display:flex; justify-content:space-between; gap:20px; align-items:flex-start;
+    padding:14px 16px; margin-bottom:8px; background:var(--paper); border:1px solid var(--border);
+    border-radius:12px; font-size:14px;
+  }
+  .log-main{ line-height:1.55; }
+  .log-route{ font-family:var(--font-mono); font-size:11.5px; color:var(--muted); margin-top:4px; }
+  .tag{
+    font-size:11px; padding:4px 10px; border-radius:20px; font-weight:700;
+    height:fit-content; white-space:nowrap;
+  }
+  .tag.hospital{ background:#FBE0DA; color:var(--terracotta-deep); }
+  .tag.oldage{ background:#FBECC8; color:var(--sun-deep); }
+  .tag.charity{ background:#DEEEE1; color:var(--leaf-deep); }
+  .tag.other{ background:#EFE9DE; color:var(--ink-soft); }
+
+  .empty{ color:var(--muted); font-size:14px; padding:20px; background:var(--paper-soft); border:1px dashed var(--border); border-radius:12px; text-align:center; }
+
+  /* Tables */
+  table{ width:100%; border-collapse:separate; border-spacing:0; font-size:14px; background:var(--paper); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  th{ text-align:left; color:var(--muted); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:12px 14px; background:var(--paper-soft); border-bottom:1px solid var(--border); }
+  td{ padding:12px 14px; border-bottom:1px solid var(--border); }
+  tr:last-child td{ border-bottom:none; }
+  td.num{ font-family:var(--font-mono); }
+  tbody tr:hover td{ background:#FFFBF3; }
+
+  /* Forms */
+  .panel{ background:var(--paper); border:1px solid var(--border); border-radius:16px; padding:24px; box-shadow:var(--shadow-sm); }
+  .form-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px 18px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field.full{ grid-column:1/-1; }
+  label{ font-size:12px; color:var(--ink-soft); font-weight:700; }
+  input, select{
+    background:var(--paper-soft); border:1px solid var(--border); color:var(--ink);
+    padding:10px 12px; border-radius:9px; font-size:14px; font-family:var(--font-ui);
+  }
+  input:focus, select:focus{ outline:none; border-color:var(--terracotta); background:var(--paper); }
+  button{
+    background:var(--terracotta); color:#fff; border:none; padding:11px 20px;
+    border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; font-family:var(--font-ui);
+    transition:background .15s, transform .1s; box-shadow:var(--shadow-sm);
+  }
+  button:hover{ background:var(--terracotta-deep); }
+  button:active{ transform:translateY(1px); }
+  button.secondary{ background:var(--paper); color:var(--ink-soft); border:1px solid var(--border); box-shadow:none; }
+  button.secondary:hover{ background:var(--paper-soft); color:var(--ink); }
+  .actions{ margin-top:16px; display:flex; gap:10px; }
+  .msg{ font-size:13px; margin-top:12px; font-weight:600; }
+  .msg.ok{ color:var(--leaf-deep); }
+  .msg.err{ color:var(--terracotta-deep); }
+
+  .two-col{ display:grid; grid-template-columns:1.3fr 1fr; gap:28px; align-items:start; }
+
+  /* Route map */
+  .map-controls{ display:flex; gap:12px; align-items:flex-end; margin-bottom:20px; flex-wrap:wrap; }
+  .map-controls .field{ min-width:180px; }
+  #graphSvg{ width:100%; height:auto; background:var(--paper); border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow-sm); }
+  .route-result{
+    margin-top:18px; font-family:var(--font-mono); font-size:13.5px; background:#FFF4E9;
+    border:1px solid var(--border); border-radius:12px; padding:16px 18px; color:var(--ink);
+  }
+
+  ::placeholder{ color:var(--muted); }
+
+  @media (max-width: 900px){
+    body{ flex-direction:column; }
+    .sidebar{ width:100%; height:auto; position:relative; flex-direction:row; align-items:center; padding:16px; }
+    .brand{ padding:0 16px 0 0; }
+    nav{ flex-direction:row; margin-top:0; }
+    .conn{ display:none; }
+    main{ padding:24px; }
+    .two-col{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="brand">
+    <div class="brand-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/><path d="M9 3c-1 1-1 2 0 3"/><path d="M14 3c-1 1-1 2 0 3"/></svg></div>
+    <div class="brand-name">Food<br>Redistribution</div>
+  </div>
+  <nav>
+    <div class="nav-item active" data-page="overview"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg></span>Overview</div>
+    <div class="nav-item" data-page="donors"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8.3" r="2.2"/><path d="M15.3 13.2c2.3.5 3.7 2.4 4.2 5"/></svg></span>Donors</div>
+    <div class="nav-item" data-page="donations"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-2 11H5L3 8Z"/><path d="M3 8 6 4h12l3 4"/><path d="M9 12v4M15 12v4"/></svg></span>Donations</div>
+    <div class="nav-item" data-page="requests"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M8 11h8M8 15h5"/></svg></span>Requests</div>
+    <div class="nav-item" data-page="route"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.3"/></svg></span>Route Finder</div>
+  </nav>
+  <div class="conn">
+    <div class="dot" id="connDot"></div>
+    <span id="connLabel">Connecting…</span>
+  </div>
+</div>
+
+<main>
+
+  <!-- OVERVIEW -->
+  <div class="page active" id="page-overview">
+    <h1>Overview</h1>
+    <p class="page-sub">Live counts from the request queues and donation ledger, straight from the running engine.</p>
+
+    <div class="stat-row">
+      <div class="stat"><div class="stat-num urgent" id="statUrgent">–</div><div class="stat-label">Urgent requests waiting</div></div>
+      <div class="stat"><div class="stat-num pending" id="statPending">–</div><div class="stat-label">Pending (unmatched)</div></div>
+      <div class="stat"><div class="stat-num ok" id="statDelivered">–</div><div class="stat-label">Delivered to date</div></div>
+      <div class="stat"><div class="stat-num sky" id="statDonors">–</div><div class="stat-label">Registered donors</div></div>
+      <div class="stat"><div class="stat-num" id="statDonations">–</div><div class="stat-label">Active donations</div></div>
+    </div>
+
+    <hr class="rule">
+
+    <section class="block">
+      <div class="block-title">Recent deliveries</div>
+      <div id="deliveryLog"><div class="empty">Loading…</div></div>
+    </section>
+  </div>
+
+  <!-- DONORS -->
+  <div class="page" id="page-donors">
+    <h1>Donors</h1>
+    <p class="page-sub">Individuals and organizations currently registered to give food.</p>
+
+    <div class="two-col">
+      <div>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Contact</th><th>Location</th></tr></thead>
+          <tbody id="donorTable"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="block-title" style="margin-bottom:16px;">Register donor</div>
+        <form id="donorForm" class="form-grid">
+          <div class="field"><label>Donor ID</label><input type="number" name="id" required></div>
+          <div class="field"><label>Type</label>
+            <select name="type"><option>Individual</option><option>Organization</option></select>
+          </div>
+          <div class="field full"><label>Name</label><input type="text" name="name" required></div>
+          <div class="field full"><label>Contact</label><input type="text" name="contact" placeholder="Phone or email" required></div>
+          <div class="field full"><label>Location</label><select name="address" id="donorLocationSelect"></select></div>
+          <div class="actions field full">
+            <button type="submit">Add donor</button>
+          </div>
+        </form>
+        <div class="msg" id="donorMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DONATIONS -->
+  <div class="page" id="page-donations">
+    <h1>Donations</h1>
+    <p class="page-sub">Food currently in the system, matched against requests by type, quantity, and expiry.</p>
+
+    <div class="two-col">
+      <div>
+        <table>
+          <thead><tr><th>ID</th><th>Donor</th><th>Food</th><th>Qty</th><th>Expiry</th><th>Status</th></tr></thead>
+          <tbody id="donationTable"></tbody>
+        </table>
+        <div class="actions" style="margin-top:18px;">
+          <input type="date" id="expireDate" style="max-width:170px;">
+          <button class="secondary" id="expireBtn">Remove expired as of this date</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="block-title" style="margin-bottom:16px;">Log donation</div>
+        <form id="donationForm" class="form-grid">
+          <div class="field"><label>Donation ID</label><input type="number" name="donationId" required></div>
+          <div class="field"><label>Donor ID</label><input type="number" name="donorId" required></div>
+          <div class="field full"><label>Food type</label><input type="text" name="foodType" placeholder="e.g. Rice" required></div>
+          <div class="field"><label>Quantity</label><input type="number" name="quantity" required></div>
+          <div class="field"><label>Expiry date</label><input type="date" name="expiryDate" required></div>
+          <div class="actions field full">
+            <button type="submit">Add donation</button>
+          </div>
+        </form>
+        <div class="msg" id="donationMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REQUESTS -->
+  <div class="page" id="page-requests">
+    <h1>Requests</h1>
+    <p class="page-sub">Requests are auto-ranked by organization type — hospitals before old-age homes before charities.</p>
+
+    <div class="actions" style="margin-bottom:28px;">
+      <button id="fulfillBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:7px;"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>Run fulfillment on urgent queue</button>
+    </div>
+    <div id="fulfillResults"></div>
+
+    <div class="two-col" style="margin-top:8px;">
+      <div>
+        <section class="block">
+          <div class="block-title">Urgent queue</div>
+          <div id="urgentList"><div class="empty">Loading…</div></div>
+        </section>
+        <section class="block">
+          <div class="block-title">Pending (awaiting stock)</div>
+          <div id="pendingList"><div class="empty">Loading…</div></div>
+        </section>
+      </div>
+      <div class="panel">
+        <div class="block-title" style="margin-bottom:16px;">New request</div>
+        <form id="requestForm" class="form-grid">
+          <div class="field full"><label>Recipient name</label><input type="text" name="recipientName" required></div>
+          <div class="field"><label>Food type</label><input type="text" name="foodType" required></div>
+          <div class="field"><label>Quantity</label><input type="number" name="quantity" required></div>
+          <div class="field"><label>Organization type</label>
+            <select name="organizationType"><option>Hospital</option><option>OldAge Home</option><option>Charity</option></select>
+          </div>
+          <div class="field"><label>Organization name</label><input type="text" name="organizationName" required></div>
+          <div class="field"><label>Location</label><select name="location" id="reqLocationSelect"></select></div>
+          <div class="field"><label>Request date</label><input type="date" name="requestDate" required></div>
+          <div class="actions field full"><button type="submit">Submit request</button></div>
+        </form>
+        <div class="msg" id="requestMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROUTE FINDER -->
+  <div class="page" id="page-route">
+    <h1>Route Finder</h1>
+    <p class="page-sub">Shortest delivery path across the city network, computed with Dijkstra's algorithm over the project's own priority-queue implementation.</p>
+
+    <div class="map-controls">
+      <div class="field"><label>From</label><select id="routeFrom"></select></div>
+      <div class="field"><label>To</label><select id="routeTo"></select></div>
+      <button id="routeBtn" style="align-self:flex-end;">Find route</button>
+    </div>
+
+    <svg id="graphSvg" viewBox="0 0 900 600"></svg>
+    <div class="route-result" id="routeResult" style="display:none;"></div>
+  </div>
+
+</main>
+
+<script>
+const API = (location.protocol === "file:") ? "http://localhost:8080" : "";
+
+/* ---------------- Navigation ---------------- */
+document.querySelectorAll(".nav-item").forEach(item => {
+  item.addEventListener("click", () => {
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    item.classList.add("active");
+    document.getElementById("page-" + item.dataset.page).classList.add("active");
+  });
+});
+
+/* ---------------- Connection check ---------------- */
+async function checkConn(){
+  const dot = document.getElementById("connDot");
+  const label = document.getElementById("connLabel");
+  try{
+    const r = await fetch(API + "/api/stats");
+    if(!r.ok) throw new Error();
+    dot.className = "dot live"; label.textContent = "Server connected";
+    return true;
+  }catch(e){
+    dot.className = "dot dead"; label.textContent = "Server offline — start server_main";
+    return false;
+  }
+}
+
+/* ---------------- Locations ---------------- */
+let LOCATIONS = [];
+async function loadLocations(){
+  const r = await fetch(API + "/api/locations");
+  LOCATIONS = await r.json();
+  [document.getElementById("donorLocationSelect"), document.getElementById("reqLocationSelect")].forEach(sel=>{
+    sel.innerHTML = LOCATIONS.map(l => `<option>${l}</option>`).join("");
+  });
+}
+
+/* ---------------- Overview ---------------- */
+async function loadStats(){
+  const r = await fetch(API + "/api/stats");
+  const s = await r.json();
+  document.getElementById("statUrgent").textContent = s.requests.urgent;
+  document.getElementById("statPending").textContent = s.requests.pending;
+  document.getElementById("statDelivered").textContent = s.requests.delivered;
+  document.getElementById("statDonors").textContent = s.donors.total;
+  document.getElementById("statDonations").textContent = s.donations.total;
+}
+
+function orgTagClass(type){
+  const t = (type||"").toUpperCase();
+  if(t.includes("HOSPITAL")) return "hospital";
+  if(t.includes("OLDAGE") || t.includes("OLD AGE")) return "oldage";
+  if(t.includes("CHARITY")) return "charity";
+  return "other";
+}
+
+async function loadDeliveryLog(){
+  const r = await fetch(API + "/api/requests/fulfilled");
+  const list = await r.json();
+  const el = document.getElementById("deliveryLog");
+  if(list.length === 0){ el.innerHTML = '<div class="empty">No deliveries yet.</div>'; return; }
+  el.innerHTML = list.slice(0,12).map(req => `
+    <div class="log-item">
+      <div class="log-main">
+        <div><strong>${req.recipientName}</strong> — ${req.quantity} ${req.foodType} (${req.organizationName})</div>
+        <div class="log-route">${req.requestDate}</div>
+      </div>
+      <span class="tag ${orgTagClass(req.organizationType)}">${req.organizationType}</span>
+    </div>
+  `).join("");
+}
+
+/* ---------------- Donors ---------------- */
+async function loadDonors(){
+  const r = await fetch(API + "/api/donors");
+  const list = await r.json();
+  document.getElementById("donorTable").innerHTML = list.length ? list.map(d => `
+    <tr><td class="num">${d.id}</td><td>${d.name}</td><td>${d.type}</td><td>${d.contact}</td><td>${d.address}</td></tr>
+  `).join("") : `<tr><td colspan="5" class="empty">No donors registered yet.</td></tr>`;
+}
+
+document.getElementById("donorForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = Object.fromEntries(f.entries());
+  body.id = parseInt(body.id);
+  const msg = document.getElementById("donorMsg");
+  try{
+    const r = await fetch(API + "/api/donors", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if(data.ok){ msg.textContent = "Donor added."; msg.className = "msg ok"; e.target.reset(); loadDonors(); loadStats(); }
+    else { msg.textContent = data.error || "Failed to add donor."; msg.className = "msg err"; }
+  }catch(err){ msg.textContent = "Could not reach server."; msg.className = "msg err"; }
+});
+
+/* ---------------- Donations ---------------- */
+async function loadDonations(){
+  const r = await fetch(API + "/api/donations");
+  const list = await r.json();
+  document.getElementById("donationTable").innerHTML = list.length ? list.map(d => `
+    <tr><td class="num">${d.donationId}</td><td class="num">${d.donorId}</td><td>${d.foodType}</td>
+    <td class="num">${d.quantity}/${d.originalQuantity}</td><td>${d.expiryDate}</td><td>${d.status}</td></tr>
+  `).join("") : `<tr><td colspan="6" class="empty">No donations logged yet.</td></tr>`;
+}
+
+document.getElementById("donationForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = Object.fromEntries(f.entries());
+  body.donationId = parseInt(body.donationId);
+  body.donorId = parseInt(body.donorId);
+  body.quantity = parseInt(body.quantity);
+  const msg = document.getElementById("donationMsg");
+  try{
+    const r = await fetch(API + "/api/donations", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if(data.ok){ msg.textContent = "Donation added."; msg.className = "msg ok"; e.target.reset(); loadDonations(); loadStats(); }
+    else { msg.textContent = data.error || "Failed to add donation."; msg.className = "msg err"; }
+  }catch(err){ msg.textContent = "Could not reach server."; msg.className = "msg err"; }
+});
+
+document.getElementById("expireBtn").addEventListener("click", async () => {
+  const date = document.getElementById("expireDate").value;
+  if(!date) return;
+  await fetch(API + "/api/donations/expire", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({today: date})});
+  loadDonations(); loadStats();
+});
+
+/* ---------------- Requests ---------------- */
+async function loadRequestLists(){
+  const [uRes, pRes] = await Promise.all([fetch(API+"/api/requests/urgent"), fetch(API+"/api/requests/pending")]);
+  const urgent = await uRes.json(); const pending = await pRes.json();
+
+  const urgentEl = document.getElementById("urgentList");
+  urgentEl.innerHTML = urgent.length ? urgent.map(r => `
+    <div class="log-item">
+      <div class="log-main"><strong>${r.recipientName}</strong> — ${r.quantity} ${r.foodType} (${r.organizationName})</div>
+      <span class="tag ${orgTagClass(r.organizationType)}">${r.organizationType}</span>
+    </div>`).join("") : '<div class="empty">No urgent requests.</div>';
+
+  const pendingEl = document.getElementById("pendingList");
+  pendingEl.innerHTML = pending.length ? pending.map(r => `
+    <div class="log-item">
+      <div class="log-main">
+        <div><strong>${r.recipientName}</strong> — ${r.quantity} ${r.foodType} (${r.organizationName})</div>
+        <div class="log-route">${r.skipReason || "Awaiting donation"}</div>
+      </div>
+      <span class="tag ${orgTagClass(r.organizationType)}">${r.organizationType}</span>
+    </div>`).join("") : '<div class="empty">No pending requests.</div>';
+}
+
+document.getElementById("requestForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = Object.fromEntries(f.entries());
+  body.quantity = parseInt(body.quantity);
+  const msg = document.getElementById("requestMsg");
+  try{
+    const r = await fetch(API + "/api/requests", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if(data.ok){ msg.textContent = "Request submitted."; msg.className = "msg ok"; e.target.reset(); loadRequestLists(); loadStats(); }
+    else { msg.textContent = data.error || "Failed to submit."; msg.className = "msg err"; }
+  }catch(err){ msg.textContent = "Could not reach server."; msg.className = "msg err"; }
+});
+
+document.getElementById("fulfillBtn").addEventListener("click", async () => {
+  const el = document.getElementById("fulfillResults");
+  el.innerHTML = '<div class="empty">Running matching engine…</div>';
+  const r = await fetch(API + "/api/requests/fulfill", {method:"POST"});
+  const results = await r.json();
+  if(results.length === 0){ el.innerHTML = '<div class="empty">No urgent requests to process.</div>'; }
+  else {
+    el.innerHTML = results.map(res => {
+      if(res.status === "fulfilled"){
+        return `<div class="log-item">
+          <div class="log-main">
+            <div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}</div>
+            <div class="log-route">${res.route}</div>
+          </div>
+          <span class="tag charity">FULFILLED</span>
+        </div>`;
+      } else {
+        return `<div class="log-item">
+          <div class="log-main">
+            <div><strong>Moved to pending</strong> — ${res.request.quantity} ${res.request.foodType} for ${res.request.recipientName}</div>
+            <div class="log-route">${res.reason}</div>
+          </div>
+          <span class="tag hospital">PENDING</span>
+        </div>`;
+      }
+    }).join("");
+  }
+  loadRequestLists(); loadDeliveryLog(); loadStats();
+});
+
+/* ---------------- Route Finder (SVG graph) ---------------- */
+const GRAPH_NODES = {
+  "North Nazimabad": [350, 80], "Buffer Zone": [480, 90], "Gulberg": [560, 150],
+  "SITE": [200, 150], "Lyari": [260, 260], "Saddar": [330, 260],
+  "Clifton": [280, 380], "Defense": [400, 420], "PECHS": [420, 300],
+  "Bahadurabad": [500, 300], "Gulshan-e-Iqbal": [560, 260], "Gulistan-e-Jauhar": [650, 300],
+  "Malir": [700, 380], "Shahrah-e-Faisal": [620, 420], "Korangi": [520, 460], "Landhi": [560, 540]
+};
+const GRAPH_EDGES = [
+  ["Saddar","Clifton",8],["Saddar","PECHS",5],["Saddar","Lyari",4],["Saddar","Gulshan-e-Iqbal",10],
+  ["Saddar","North Nazimabad",12],["Clifton","Defense",6],["Defense","PECHS",6],["Defense","Korangi",12],
+  ["PECHS","Bahadurabad",3],["Bahadurabad","Gulshan-e-Iqbal",6],["Gulshan-e-Iqbal","Gulistan-e-Jauhar",4],
+  ["Gulistan-e-Jauhar","Malir",9],["Malir","Shahrah-e-Faisal",5],["Shahrah-e-Faisal","Korangi",6],
+  ["Korangi","Landhi",8],["Landhi","SITE",14],["North Nazimabad","Buffer Zone",5],["Buffer Zone","Gulberg",4],
+  ["Gulberg","Gulshan-e-Iqbal",7],["SITE","Lyari",7],["SITE","North Nazimabad",11],["Clifton","Lyari",6],
+  ["Gulistan-e-Jauhar","Shahrah-e-Faisal",5],["Bahadurabad","Korangi",10],["Gulshan-e-Iqbal","Malir",12]
+];
+
+function drawGraph(highlightPath = []){
+  const svg = document.getElementById("graphSvg");
+  const pathSet = new Set();
+  for(let i=0;i<highlightPath.length-1;i++){
+    pathSet.add(highlightPath[i]+"|"+highlightPath[i+1]);
+    pathSet.add(highlightPath[i+1]+"|"+highlightPath[i]);
+  }
+  let svgContent = "";
+  GRAPH_EDGES.forEach(([a,b,w]) => {
+    const [x1,y1] = GRAPH_NODES[a]; const [x2,y2] = GRAPH_NODES[b];
+    const isPath = pathSet.has(a+"|"+b);
+    svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+      stroke="${isPath ? '#E2683B' : '#EDE1CC'}" stroke-width="${isPath ? 4 : 1.5}" stroke-linecap="round" />`;
+    const mx = (x1+x2)/2, my = (y1+y2)/2;
+    svgContent += `<text x="${mx}" y="${my}" fill="#9C8F7B" font-size="10" font-family="Space Mono" text-anchor="middle">${w}</text>`;
+  });
+  Object.entries(GRAPH_NODES).forEach(([name,[x,y]]) => {
+    const onPath = highlightPath.includes(name);
+    svgContent += `<circle cx="${x}" cy="${y}" r="${onPath?8:5.5}" fill="${onPath?'#4C8B5D':'#E2683B'}" fill-opacity="${onPath?1:0.85}" stroke="#FFFFFF" stroke-width="2.5"/>`;
+    svgContent += `<text x="${x}" y="${y-14}" fill="${onPath?'#396B47':'#6B5F4F'}" font-size="11.5" font-family="Plus Jakarta Sans" text-anchor="middle" font-weight="${onPath?700:600}">${name}</text>`;
+  });
+  svg.innerHTML = svgContent;
+}
+
+function populateRouteSelects(){
+  const names = Object.keys(GRAPH_NODES);
+  document.getElementById("routeFrom").innerHTML = names.map(n=>`<option>${n}</option>`).join("");
+  document.getElementById("routeTo").innerHTML = names.map(n=>`<option>${n}</option>`).join("");
+  document.getElementById("routeTo").selectedIndex = 1;
+}
+
+document.getElementById("routeBtn").addEventListener("click", async () => {
+  const from = document.getElementById("routeFrom").value;
+  const to = document.getElementById("routeTo").value;
+  const r = await fetch(`${API}/api/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  const data = await r.json();
+  const resultEl = document.getElementById("routeResult");
+  resultEl.style.display = "block";
+  resultEl.textContent = data.route.trim();
+
+  const match = data.route.match(/from .+? to .+?: (.+?) \(Distance/);
+  if(match){
+    const path = match[1].split(" -> ").map(s=>s.trim());
+    drawGraph(path);
+  } else {
+    drawGraph([]);
+  }
+});
+
+/* ---------------- Init ---------------- */
+async function init(){
+  populateRouteSelects();
+  drawGraph();
+  const connected = await checkConn();
+  if(connected){
+    loadLocations();
+    loadStats();
+    loadDeliveryLog();
+    loadDonors();
+    loadDonations();
+    loadRequestLists();
+  }
+  setInterval(checkConn, 8000);
+}
+init();
+</script>
+</body>
+</html>

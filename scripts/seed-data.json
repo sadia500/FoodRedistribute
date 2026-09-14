@@ -1,0 +1,16 @@
+{
+  "note": "Clearly-fake demo data for the Firebase Edition. Import via the Firebase console (Firestore Data tab -> each collection -> Add document, or the Firestore import tooling) after signing in with a real account, since writes now require authentication. Replace any leftover ad-hoc rows in the live database (e.g. records named 'Test Patient' or donor 'XYZ') with this set, or with your own equally clearly-labeled data, before showing the app to anyone.",
+  "donors": [
+    { "id": 1, "name": "Al-Noor Bakery", "type": "Organization", "contact": "021-1110001", "address": "PECHS" },
+    { "id": 2, "name": "Sana Kitchen Co.", "type": "Individual", "contact": "0300-1110002", "address": "Clifton" },
+    { "id": 3, "name": "Karachi Grand Hotel", "type": "Organization", "contact": "021-1110003", "address": "Saddar" }
+  ],
+  "donations": [
+    { "donationId": 101, "donorId": 1, "foodType": "Bread", "quantity": 40, "originalQuantity": 40, "expiryDate": "2026-09-20", "status": "Pending" },
+    { "donationId": 102, "donorId": 2, "foodType": "Rice", "quantity": 25, "originalQuantity": 25, "expiryDate": "2026-09-22", "status": "Pending" },
+    { "donationId": 103, "donorId": 3, "foodType": "Rice", "quantity": 15, "originalQuantity": 15, "expiryDate": "2026-09-18", "status": "Pending" }
+  ],
+  "requests_urgent_example": [
+    { "recipientName": "City General Hospital", "foodType": "Rice", "quantity": 30, "organizationType": "HOSPITAL", "organizationName": "City General Hospital", "location": "Defense", "requestDate": "2026-09-15" }
+  ]
+}

@@ -33,7 +33,8 @@
   .nav-item.active .ico svg{ transform:scale(1.08); }
   .nav-item:hover{ color:var(--ink); background:var(--paper-soft); }
   .nav-item.active{ color:var(--terracotta-deep); background:#FBE7DA; }
-  .conn{ margin-top:auto; padding:16px 26px 0; font-size:12.5px; color:var(--muted); font-weight:600; display:flex; align-items:center; gap:8px; border-top:1px solid var(--border); padding-top:16px; }
+  .sidebar-bottom{ margin-top:auto; border-top:1px solid var(--border); padding-top:16px; }
+  .conn{ padding:0 26px; font-size:12.5px; color:var(--muted); font-weight:600; display:flex; align-items:center; gap:8px; }
   .dot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
   .dot.live{ background:var(--leaf); box-shadow:0 0 0 0 rgba(76,139,93,.4); animation:dotPulse 2.2s ease-out infinite; }
   .dot.dead{ background:var(--terracotta); box-shadow:0 0 0 4px rgba(226,104,59,.16); }
@@ -96,10 +97,47 @@
   ::placeholder{ color:var(--muted); }
   .banner{ background:#EAF3EE; border:1px solid #CFE6D8; color:var(--leaf-deep); font-size:13px; font-weight:600; padding:12px 16px; border-radius:10px; margin-bottom:24px; }
   @media (max-width: 900px){ body{ flex-direction:column; } .sidebar{ width:100%; height:auto; position:relative; flex-direction:row; align-items:center; padding:16px; } .brand{ padding:0 16px 0 0; } nav{ flex-direction:row; margin-top:0; } .conn{ display:none; } main{ padding:24px; } .two-col{ grid-template-columns:1fr; } }
+
+  /* Auth gate */
+  #authGate{ display:flex; align-items:center; justify-content:center; min-height:100vh; width:100%; }
+  .auth-card{ width:100%; max-width:380px; background:var(--paper); border:1px solid var(--border); border-radius:18px; padding:32px 30px; box-shadow:var(--shadow-md); }
+  .auth-brand{ display:flex; align-items:center; gap:11px; margin-bottom:22px; }
+  .auth-tabs{ display:flex; gap:6px; margin-bottom:22px; background:var(--paper-soft); border:1px solid var(--border); border-radius:11px; padding:4px; }
+  .auth-tab{ flex:1; text-align:center; padding:9px 0; border-radius:8px; font-size:13.5px; font-weight:700; color:var(--ink-soft); cursor:pointer; user-select:none; }
+  .auth-tab.active{ background:var(--paper); color:var(--terracotta-deep); box-shadow:var(--shadow-sm); }
+  .auth-form{ display:flex; flex-direction:column; gap:14px; }
+  .auth-form button{ margin-top:4px; }
+  .auth-link{ display:block; text-align:center; margin-top:14px; font-size:12.5px; color:var(--ink-soft); cursor:pointer; text-decoration:underline; }
+  #appShell{ display:none; width:100%; }
+  #appShell.visible{ display:flex; }
+  .userbar{ padding:0 26px 14px; font-size:12.5px; color:var(--ink-soft); }
+  .userbar .email{ display:block; font-weight:700; color:var(--ink); margin-bottom:8px; word-break:break-all; }
+  .userbar button{ width:100%; padding:8px 0; font-size:12.5px; }
 </style>
 </head>
 <body>
 
+<div id="authGate">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="brand-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/><path d="M9 3c-1 1-1 2 0 3"/><path d="M14 3c-1 1-1 2 0 3"/></svg></div>
+      <div class="brand-name">Food<br>Redistribution</div>
+    </div>
+    <div class="auth-tabs">
+      <div class="auth-tab active" data-mode="signin">Sign in</div>
+      <div class="auth-tab" data-mode="signup">Create account</div>
+    </div>
+    <form class="auth-form" id="authForm">
+      <div class="field"><label>Email</label><input type="email" name="email" required autocomplete="email"></div>
+      <div class="field"><label>Password</label><input type="password" name="password" required autocomplete="current-password" minlength="6"></div>
+      <button type="submit" id="authSubmitBtn">Sign in</button>
+    </form>
+    <span class="auth-link" id="forgotLink">Forgot password?</span>
+    <div class="msg" id="authMsg"></div>
+  </div>
+</div>
+
+<div id="appShell">
 <div class="sidebar">
   <div class="brand">
     <div class="brand-mark"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/><path d="M9 3c-1 1-1 2 0 3"/><path d="M14 3c-1 1-1 2 0 3"/></svg></div>
@@ -112,7 +150,10 @@
     <div class="nav-item" data-page="requests"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M8 11h8M8 15h5"/></svg></span>Requests</div>
     <div class="nav-item" data-page="route"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.3"/></svg></span>Route Finder</div>
   </nav>
-  <div class="conn"><div class="dot" id="connDot"></div><span id="connLabel">Connecting…</span></div>
+  <div class="sidebar-bottom">
+    <div class="userbar"><span class="email" id="userEmail"></span><button class="secondary" id="signOutBtn">Sign out</button></div>
+    <div class="conn"><div class="dot" id="connDot"></div><span id="connLabel">Connecting…</span></div>
+  </div>
 </div>
 
 <main>
@@ -212,11 +253,13 @@
     <div class="route-result" id="routeResult" style="display:none;"></div>
   </div>
 </main>
+</div>
 
 <!-- Firebase SDK (compat build — no bundler needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
-<script src="firebase-app.js?v=3"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="firebase-app.js?v=4"></script>
 
 <script>
 document.querySelectorAll(".nav-item").forEach(item => {
@@ -242,16 +285,30 @@ function populateLocationSelects(){
   document.getElementById("reqLocationSelect").innerHTML = opts;
 }
 
+// Tracks the last-rendered value on the element itself (via dataset) rather
+// than re-parsing its displayed text. The first render always used to bail
+// out silently whenever the real count was 0: textContent started as "–",
+// parseInt("–") is NaN so oldVal fell back to 0, and 0 === newVal (0) short-
+// circuited the function before it ever wrote "0" over the placeholder — the
+// tile was then stuck showing "–" forever. Tracking "has this element been
+// rendered at all yet" separately from "what value does it hold" fixes that:
+// the very first call always paints a real number, equal to the target or not.
 function animateNumber(el, newVal){
-  const oldVal = parseInt(el.textContent, 10) || 0;
-  if (oldVal === newVal) return;
+  const hasRendered = el.dataset.rendered === "1";
+  const fromVal = hasRendered ? (parseInt(el.dataset.val, 10) || 0) : 0;
+  if (hasRendered && fromVal === newVal) return;
   const start = performance.now(), dur = 450;
   function step(now){
     const t = Math.min(1, (now - start) / dur);
     const eased = 1 - Math.pow(1 - t, 3);
-    el.textContent = Math.round(oldVal + (newVal - oldVal) * eased);
+    el.textContent = Math.round(fromVal + (newVal - fromVal) * eased);
     if (t < 1) requestAnimationFrame(step);
-    else { el.textContent = newVal; el.classList.add("bump"); setTimeout(()=>el.classList.remove("bump"), 180); }
+    else {
+      el.textContent = newVal;
+      el.dataset.val = newVal;
+      el.dataset.rendered = "1";
+      el.classList.add("bump"); setTimeout(()=>el.classList.remove("bump"), 180);
+    }
   }
   requestAnimationFrame(step);
 }
@@ -351,7 +408,7 @@ document.getElementById("fulfillBtn").addEventListener("click", async () => {
   if(results.length === 0){ el.innerHTML = '<div class="empty">No urgent requests to process.</div>'; }
   else {
     el.innerHTML = results.map(res => res.status === "fulfilled" ? `
-      <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}</div>
+      <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}${res.splitAcross > 1 ? ` <span style="color:var(--muted);font-weight:600;">(split across ${res.splitAcross} donations)</span>` : ""}</div>
       <div class="log-route">${res.route}</div></div><span class="tag charity">FULFILLED</span></div>` : `
       <div class="log-item"><div class="log-main"><div><strong>Moved to pending</strong> — ${res.request.quantity} ${res.request.foodType} for ${res.request.recipientName}</div>
       <div class="log-route">${res.reason}</div></div><span class="tag hospital">PENDING</span></div>`
@@ -429,7 +486,7 @@ document.getElementById("routeBtn").addEventListener("click", () => {
   drawGraph(match ? match[1].split(" -> ").map(s=>s.trim()) : []);
 });
 
-async function init(){
+async function loadDashboard(){
   populateLocationSelects();
   populateRouteSelects();
   drawGraph();
@@ -443,7 +500,98 @@ async function init(){
     console.error(e);
   }
 }
-init();
+
+// ---- Auth gate ---------------------------------------------------------
+// The dashboard (#appShell) only ever loads data once a signed-in user is
+// confirmed by Firebase Auth — Firestore itself also refuses reads/writes
+// from a signed-out client (see firestore.rules), this just keeps the UI
+// consistent with that and avoids a flash of empty/broken tables first.
+
+let dashboardLoaded = false;
+const authGate = document.getElementById("authGate");
+const appShell = document.getElementById("appShell");
+const authForm = document.getElementById("authForm");
+const authMsg = document.getElementById("authMsg");
+const authSubmitBtn = document.getElementById("authSubmitBtn");
+let authMode = "signin";
+
+document.querySelectorAll(".auth-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".auth-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    authMode = tab.dataset.mode;
+    authSubmitBtn.textContent = authMode === "signup" ? "Create account" : "Sign in";
+    authMsg.textContent = ""; authMsg.className = "msg";
+  });
+});
+
+authForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  const email = authForm.email.value.trim();
+  const password = authForm.password.value;
+  authSubmitBtn.disabled = true;
+  authMsg.textContent = ""; authMsg.className = "msg";
+  try {
+    if (authMode === "signup") await window.FRS.signUp(email, password);
+    else await window.FRS.signIn(email, password);
+    // onAuthChange below picks up the resulting signed-in state.
+  } catch (err) {
+    authMsg.textContent = friendlyAuthError(err);
+    authMsg.className = "msg err";
+  } finally {
+    authSubmitBtn.disabled = false;
+  }
+});
+
+document.getElementById("forgotLink").addEventListener("click", async () => {
+  const email = authForm.email.value.trim();
+  if (!email) {
+    authMsg.textContent = "Enter your email above first, then click “Forgot password?” again.";
+    authMsg.className = "msg err";
+    return;
+  }
+  try {
+    await window.FRS.sendPasswordReset(email);
+    authMsg.textContent = "Password reset email sent — check your inbox.";
+    authMsg.className = "msg ok";
+  } catch (err) {
+    authMsg.textContent = friendlyAuthError(err);
+    authMsg.className = "msg err";
+  }
+});
+
+document.getElementById("signOutBtn").addEventListener("click", async () => {
+  await window.FRS.signOutUser();
+});
+
+function friendlyAuthError(err){
+  const code = err && err.code;
+  const map = {
+    "auth/email-already-in-use": "An account already exists for that email — try signing in instead.",
+    "auth/invalid-email": "That doesn't look like a valid email address.",
+    "auth/weak-password": "Password must be at least 6 characters.",
+    "auth/user-not-found": "No account found for that email.",
+    "auth/wrong-password": "Incorrect password.",
+    "auth/invalid-credential": "Incorrect email or password.",
+    "auth/too-many-requests": "Too many attempts — please wait a moment and try again.",
+    "auth/network-request-failed": "Network error — check your connection and try again."
+  };
+  return map[code] || "Something went wrong. Please try again.";
+}
+
+window.FRS.onAuthChange(async user => {
+  if (user) {
+    authGate.style.display = "none";
+    appShell.classList.add("visible");
+    document.getElementById("userEmail").textContent = user.email;
+    if (!dashboardLoaded) { dashboardLoaded = true; await loadDashboard(); }
+  } else {
+    dashboardLoaded = false;
+    appShell.classList.remove("visible");
+    authGate.style.display = "flex";
+    authForm.reset();
+  }
+});
 </script>
 </body>
 </html>

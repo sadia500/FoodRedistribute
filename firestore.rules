@@ -1,13 +1,54 @@
 rules_version = '2';
 
-// Same access level as the "test mode" you already picked when creating the
-// Firestore database in the console: open reads/writes for the demo.
-// Fine for a portfolio project. If you ever want to lock it down, this is
-// the file to tighten later (e.g. require auth, or make it read-only).
+// Authenticated-users-only access. Every read and write requires a signed-in
+// Firebase Auth user; anonymous/public access from the earlier "test mode"
+// config is closed off.
+//
+// This is not yet a per-role/per-owner model (a donor can still see and edit
+// records another donor created) — that's a larger change tracked in
+// IMPLEMENTATION_PLAN.md under later phases. This step closes the one gap
+// that matters regardless of how far the role system goes: nobody outside
+// the app's own signed-in users can touch the data.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // One profile document per signed-in user, created client-side on first
+    // sign-in (see ensureUserProfile in firebase-app.js). A user can read
+    // any profile (needed for displaying names elsewhere in the app) but
+    // can only create/update their own, and can never change their own
+    // `role` field once it's set.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    // Operational collections: shared across every signed-in user for now.
+    match /donors/{donorId} {
+      allow read, write: if isSignedIn();
+    }
+    match /donations/{donationId} {
+      allow read, write: if isSignedIn();
+    }
+    match /requests_urgent/{requestId} {
+      allow read, write: if isSignedIn();
+    }
+    match /requests_pending/{requestId} {
+      allow read, write: if isSignedIn();
+    }
+    match /requests_fulfilled/{requestId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Default deny — anything not explicitly listed above is closed.
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

@@ -88,7 +88,21 @@ It's live at **[foodredistribution-app.web.app](https://foodredistribution-app.w
 
 The original C++ source (`FoodRedistributionSystem(new)/`, `WebEdition/`) is untouched by this edition — it's a separate, self-contained implementation of the same logic for the web.
 
+### Authentication & security
+
+The Firebase Edition requires a signed-in account (email/password, created from the "Create account" tab on the login screen) for every read and write — the dashboard is not reachable while signed out, and `firestore.rules` rejects any Firestore access from a request without `request.auth` set. There's no per-owner data model yet (any signed-in user can see and edit any record), just a closed front door instead of the fully public one this started with. See `IMPLEMENTATION_PLAN.md` for what a role-scoped version of this would look like.
+
+### Testing
+
+The matching engine, priority queue, Dijkstra shortest-path, and request-priority logic in `firebase-app.js` have a unit test suite under `test/`, run with Node's built-in test runner (no extra dependencies):
+
+```
+npm test
+```
+
+This includes coverage for partial-donation matching — a single donation quantity can now be split across more than one request over time, *and* a single request can be filled by combining more than one donation when no single lot covers it alone.
+
 ## Notes
 
 - Location data (donor/recipient addresses) is currently limited to a fixed set of 15 predefined Karachi neighborhoods used in the UI. The underlying road graph technically has a 16th node (`Gulistan-e-Jauhar`), added implicitly as a waypoint between two of the listed locations, but it's never assignable as a donor/recipient address.
-- Matching logic checks food type, available quantity, donation status, and expiry date (relative to the request date) before confirming a fulfillment.
+- Matching logic checks food type, available quantity (allocated across multiple donations if needed), and expiry date (relative to the request date) before confirming a fulfillment.

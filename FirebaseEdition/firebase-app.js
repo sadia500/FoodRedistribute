@@ -207,18 +207,41 @@ function shortestPath(start, end) {
   return `[Shortest path from ${start} to ${end}: ${path.join(" -> ")} (Distance: ${dist[end]}) ]`;
 }
 
-// ---- 5. Donation matching — mirrors DonationLinkedList::findMatchingDonation
+// ---- 5. Donation matching ---------------------------------------------
+// findMatchingDonations allocates a single request's quantity across
+// however many eligible donations it takes to cover it, largest lot first
+// (so a request doesn't fragment more donations than necessary). This is
+// what lets one 50-unit donation serve a 20-unit request and a 15-unit
+// request separately (tracked by decrementing `quantity` per donation) *and*
+// lets one request whose need exceeds any single donation draw from several
+// smaller ones at once — e.g. a 30-unit request pulling 25 from one lot and
+// 5 from another. Returns null if the eligible total can't cover the request
+// at all; otherwise an array of { donation, take } allocations that sum to
+// exactly quantityNeeded.
 function toLower(s) { return (s || "").toLowerCase(); }
 
-function findMatchingDonation(donations, foodTypeNeeded, quantityNeeded, requestDate) {
+function findMatchingDonations(donations, foodTypeNeeded, quantityNeeded, requestDate) {
   const neededLower = toLower(foodTypeNeeded);
-  for (const d of donations) {
-    if (toLower(d.foodType) !== neededLower) continue;
-    if (d.quantity < quantityNeeded) continue;
-    if ((d.expiryDate || "").trim() <= (requestDate || "").trim()) continue;
-    return d;
+  const eligible = donations
+    .filter(d =>
+      toLower(d.foodType) === neededLower &&
+      d.quantity > 0 &&
+      (d.expiryDate || "").trim() > (requestDate || "").trim()
+    )
+    .sort((a, b) => b.quantity - a.quantity);
+
+  const totalAvailable = eligible.reduce((sum, d) => sum + d.quantity, 0);
+  if (totalAvailable < quantityNeeded) return null;
+
+  const allocations = [];
+  let remaining = quantityNeeded;
+  for (const d of eligible) {
+    if (remaining <= 0) break;
+    const take = Math.min(d.quantity, remaining);
+    allocations.push({ donation: d, take });
+    remaining -= take;
   }
-  return null;
+  return allocations;
 }
 
 // ---- 6. In-memory state, loaded from Firestore on startup ------------------
@@ -274,8 +297,10 @@ async function submitRequest({ recipientName, foodType, quantity, organizationTy
   await db.collection("requests_urgent").add({ ...r, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
 }
 
-// Runs the same matching loop as /api/requests/fulfill in server_main.cpp,
-// draining the urgent PriorityQueue and returning a log of every outcome.
+// Drains the urgent PriorityQueue, attempting to allocate each request
+// against the current in-memory donation list (mutated in place as it goes,
+// same as before, so a later request in the same run sees earlier
+// allocations already subtracted) and returns a log of every outcome.
 async function runFulfillment() {
   const results = [];
   const batch = db.batch();
@@ -286,46 +311,54 @@ async function runFulfillment() {
     urgentPQ.pop();
     toDelete.push(r._id);
 
-    const match = findMatchingDonation(donations, r.foodType, r.quantity, r.requestDate);
+    const allocations = findMatchingDonations(donations, r.foodType, r.quantity, r.requestDate);
 
-    if (match) {
-      match.quantity -= r.quantity;
-      if (match.quantity === 0) match.status = "Completed";
-      batch.update(db.collection("donations").doc(match._id), {
-        quantity: match.quantity, status: match.status
+    if (allocations) {
+      const donorLocations = [];
+      allocations.forEach(({ donation, take }) => {
+        donation.quantity -= take;
+        donation.status = donation.quantity === 0 ? "Completed" : "Partially Fulfilled";
+        batch.update(db.collection("donations").doc(donation._id), {
+          quantity: donation.quantity, status: donation.status
+        });
+        const donor = donors.find(d => d.id === donation.donorId);
+        donorLocations.push(donor ? donor.address : "Unknown Location");
       });
 
       r.isFulfilled = true;
-      const donor = donors.find(d => d.id === match.donorId);
-      const donorLoc = donor ? donor.address : "Unknown Location";
-      const route = shortestPath(donorLoc, r.location);
+      r.sourceDonations = allocations.map(a => ({ donationId: a.donation.donationId, quantity: a.take }));
+
+      // Route from the primary (largest-contribution) donor; when more than
+      // one donation contributed, note that in the result for the UI.
+      const primaryLocation = donorLocations[0];
+      const route = shortestPath(primaryLocation, r.location);
 
       const fulfilledRef = db.collection("requests_fulfilled").doc();
       batch.set(fulfilledRef, { ...stripMeta(r), createdAt: firebase.firestore.FieldValue.serverTimestamp() });
 
-      results.push({ status: "fulfilled", request: r, fromLocation: donorLoc, route });
+      results.push({
+        status: "fulfilled", request: r, fromLocation: primaryLocation, route,
+        splitAcross: allocations.length, donorLocations
+      });
     } else {
       const needed = toLower(r.foodType);
-      let reason = "No matching donation found";
-      let foundType = false;
-      for (const d of donations) {
-        if (toLower(d.foodType) === needed) {
-          foundType = true;
-          if (d.quantity < r.quantity) {
-            reason = `Insufficient quantity (Available: ${d.quantity}, Needed: ${r.quantity})`;
-            break;
-          }
-          if (d.status !== "Pending" && d.status !== "partially completed") {
-            reason = "Donation already used";
-            break;
-          }
-          if ((d.expiryDate || "").trim() <= (r.requestDate || "").trim()) {
-            reason = `Donation expired (Expiry: ${d.expiryDate})`;
-            break;
-          }
+      const matchingType = donations.filter(d => toLower(d.foodType) === needed);
+      let reason;
+      if (matchingType.length === 0) {
+        reason = `Food type '${r.foodType}' not in stock`;
+      } else {
+        const stillValid = matchingType.filter(d =>
+          d.quantity > 0 && (d.expiryDate || "").trim() > (r.requestDate || "").trim()
+        );
+        const totalAvailable = stillValid.reduce((sum, d) => sum + d.quantity, 0);
+        if (stillValid.length === 0) {
+          reason = matchingType.every(d => d.quantity === 0)
+            ? "Donation already used"
+            : `All matching donations expired (as of ${r.requestDate})`;
+        } else {
+          reason = `Insufficient quantity across all matching donations (Available: ${totalAvailable}, Needed: ${r.quantity})`;
         }
       }
-      if (!foundType) reason = `Food type '${r.foodType}' not in stock`;
 
       r.skipReason = reason;
       const pendingRef = db.collection("requests_pending").doc();
@@ -353,5 +386,8 @@ window.FRS = {
   getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack }),
   // Auth
   signUp, signIn, signOutUser, sendPasswordReset, onAuthChange,
-  getCurrentUser: () => auth.currentUser
+  getCurrentUser: () => auth.currentUser,
+  // Exposed for the test suite (test/*.test.js) — these are pure/isolated
+  // enough to unit test directly without a Firestore connection.
+  Stack, Queue, PriorityQueue, makeRequest, findMatchingDonations
 };

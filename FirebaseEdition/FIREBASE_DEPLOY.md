@@ -66,9 +66,12 @@ Any time you change `FirebaseEdition/index.html` or `app.js`, just run
 
 ## Notes
 
-- Firestore is in **test mode** (open read/write) — fine for a portfolio
-  demo. If you ever want to restrict it, edit `firestore.rules` and run
-  `firebase deploy --only firestore:rules`.
+- Firestore requires a signed-in user for every read/write (see
+  `firestore.rules` at the repo root) — deploy rule changes on their own
+  with `firebase deploy --only firestore:rules`. You'll also need to turn on
+  the **Email/Password** sign-in provider under Firebase Console → Build →
+  Authentication → Sign-in method, or account creation from the app's
+  "Create account" screen will fail.
 - This uses the Spark (free) plan. Firebase Hosting's free tier is 10GB
   storage / 360MB per day transfer — far more than a demo site needs, and
   there's no card on file, so nothing can ever accidentally charge you.

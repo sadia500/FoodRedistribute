@@ -1,0 +1,9 @@
+{
+  "name": "food-redistribute",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test suite for the Firebase Edition's matching/DSA logic (Stack, Queue, PriorityQueue, Dijkstra shortest path, donation matching).",
+  "scripts": {
+    "test": "node --test"
+  }
+}

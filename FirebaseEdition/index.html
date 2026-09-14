@@ -408,7 +408,7 @@ document.getElementById("fulfillBtn").addEventListener("click", async () => {
   if(results.length === 0){ el.innerHTML = '<div class="empty">No urgent requests to process.</div>'; }
   else {
     el.innerHTML = results.map(res => res.status === "fulfilled" ? `
-      <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}</div>
+      <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}${res.splitAcross > 1 ? ` <span style="color:var(--muted);font-weight:600;">(split across ${res.splitAcross} donations)</span>` : ""}</div>
       <div class="log-route">${res.route}</div></div><span class="tag charity">FULFILLED</span></div>` : `
       <div class="log-item"><div class="log-main"><div><strong>Moved to pending</strong> — ${res.request.quantity} ${res.request.foodType} for ${res.request.recipientName}</div>
       <div class="log-route">${res.reason}</div></div><span class="tag hospital">PENDING</span></div>`

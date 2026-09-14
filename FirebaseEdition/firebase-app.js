@@ -23,6 +23,47 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
+
+// ---- 1b. Authentication ----------------------------------------------------
+// Every signed-in user gets a profile document at users/{uid} on first
+// sign-in. Firestore rules (see firestore.rules) require request.auth to be
+// set for every read/write, so nothing below runs for a signed-out visitor.
+
+async function ensureUserProfile(user) {
+  const ref = db.collection("users").doc(user.uid);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set({
+      email: user.email,
+      role: "member",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+}
+
+async function signUp(email, password) {
+  const cred = await auth.createUserWithEmailAndPassword(email, password);
+  await ensureUserProfile(cred.user);
+  return cred.user;
+}
+
+async function signIn(email, password) {
+  const cred = await auth.signInWithEmailAndPassword(email, password);
+  return cred.user;
+}
+
+async function sendPasswordReset(email) {
+  await auth.sendPasswordResetEmail(email);
+}
+
+async function signOutUser() {
+  await auth.signOut();
+}
+
+function onAuthChange(callback) {
+  return auth.onAuthStateChanged(callback);
+}
 
 // ---- 2. DSA structures — same behavior as the C++ classes ------------------
 
@@ -309,5 +350,8 @@ function stripMeta(r) {
 window.FRS = {
   karachiLocations, roadMap, roadEdges, shortestPath,
   loadAllState, addDonor, addDonation, expireDonations, submitRequest, runFulfillment,
-  getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack })
+  getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack }),
+  // Auth
+  signUp, signIn, signOutUser, sendPasswordReset, onAuthChange,
+  getCurrentUser: () => auth.currentUser
 };

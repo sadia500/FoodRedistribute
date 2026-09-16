@@ -88,19 +88,25 @@ It's live at **[foodredistribution-app.web.app](https://foodredistribution-app.w
 
 The original C++ source (`FoodRedistributionSystem(new)/`, `WebEdition/`) is untouched by this edition — it's a separate, self-contained implementation of the same logic for the web.
 
-### Authentication & security
+### Authentication, roles & security
 
-The Firebase Edition requires a signed-in account (email/password, created from the "Create account" tab on the login screen) for every read and write — the dashboard is not reachable while signed out, and `firestore.rules` rejects any Firestore access from a request without `request.auth` set. There's no per-owner data model yet (any signed-in user can see and edit any record), just a closed front door instead of the fully public one this started with. See `IMPLEMENTATION_PLAN.md` for what a role-scoped version of this would look like.
+Every read and write requires a signed-in account (email/password, created from the "Create account" tab), and `firestore.rules` rejects any Firestore access from a request without `request.auth` set.
+
+On top of that, the app now has a real role and ownership model, not just a closed front door:
+
+- **Roles** — a new account starts unassigned (`member`) and claims **Food Donor** or **Recipient Organization** once, the first time they sign in; **admin** can only be granted by an existing admin (there's no self-service path to it, including for admins themselves — see `firestore.rules`).
+- **Ownership** — donations and requests carry an `ownerId`. A donor can only create/edit/delete their own donations; a requester can only create/edit/delete their own requests. This is enforced in `firestore.rules`, not just hidden in the UI — a donor's write to someone else's donation document is rejected by Firestore itself.
+- **Admin** — role changes, account suspension, and running the cross-donor matching engine (`runFulfillment`) are admin-only, both in the UI and in the rules. Suspending an account blocks its writes but keeps its read access, so a suspended user can still see their own history.
+- **Matching engine stays shared** — `runFulfillment` necessarily reads and updates *other* people's donations and requests as it allocates, so triggering it is restricted to admins rather than reopened to everyone; this is a deliberate scope decision, documented at the top of `firestore.rules`.
 
 ### Testing
 
-The matching engine, priority queue, Dijkstra shortest-path, and request-priority logic in `firebase-app.js` have a unit test suite under `test/`, run with Node's built-in test runner (no extra dependencies):
+Two independent test suites live under `test/`:
 
-```
-npm test
-```
+- **`npm test`** — the matching engine, priority queue, Dijkstra shortest-path, and request-priority logic in `firebase-app.js`, run with Node's built-in test runner against the actual shipped source (no mocked reimplementation). No network or emulator needed. Includes coverage for partial-donation matching — a single donation quantity can be split across more than one request over time, *and* a single request can be filled by combining more than one donation when no single lot covers it alone.
+- **`npm run test:rules`** — ownership and role enforcement in `firestore.rules` (self-escalation, cross-owner writes, admin-only actions, suspended accounts), run against the real Firestore emulator via `@firebase/rules-unit-testing`. Needs the emulator, which `firebase emulators:exec` downloads on first run — that requires normal internet access to `storage.googleapis.com` (not available in every sandboxed environment).
 
-This includes coverage for partial-donation matching — a single donation quantity can now be split across more than one request over time, *and* a single request can be filled by combining more than one donation when no single lot covers it alone.
+`npm run test:all` runs both.
 
 ## Notes
 

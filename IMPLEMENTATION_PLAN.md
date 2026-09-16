@@ -92,6 +92,40 @@ Each phase is deployable on its own; stop after any phase and the live site stil
 - **Auth is a hard dependency for almost everything else** in the spec (roles, ownership rules, verification, audit logs) — Phase 1 blocks nearly every later phase, so it shouldn't be skipped if any later phase is wanted.
 - **Three parallel implementations** (console/WebEdition/FirebaseEdition) already exist and the README explicitly says they're independent and untouched by each other — any change here should stay scoped to `FirebaseEdition/` unless told otherwise, to avoid silently diverging the "source of truth" console app from the web edition.
 
-## 5. What I did not yet do
+## 5. Phases 1–3 — done
 
-Per the spec's Step 1 instruction, no code has been changed. This plan is the checkpoint — next step is deciding which phases (if any beyond 1–3) to actually build.
+Phases 1 (auth + locked-down rules), 2 (the "Urgent requests waiting" race fixed, demo-data cleanup documented), and 3 (multi-donation partial matching + a 13-test unit suite) are complete — see git history. `npm test` passes 13/13.
+
+## 6. Phase 4 — Role-Based Views and Secure Ownership (done)
+
+**Goal:** replace the single authenticated-but-undifferentiated `member` model with three real roles — donor, requester, admin — enforced by Firestore rules, not just the UI, while leaving the Phase 3 matching engine untouched.
+
+**Role model.** A new account starts as `role: 'member'` (unassigned) and claims `donor` or `requester` exactly once, the first time they sign in (a role picker gates the dashboard until they do). `admin` has no self-service path at all — only an existing admin can grant it to someone *else's* account; `firestore.rules` structurally prevents an admin from promoting themselves. `suspended: false` is a separate field an admin can toggle on another account to block its writes while leaving its reads intact.
+
+**Ownership.** `donations`, the `donors` registry, and all three `requests_*` collections now carry `ownerId`. Firestore rules require `ownerId == request.auth.uid` on create, and only the owner (or an admin) can update or delete afterwards; `ownerId` itself is immutable post-creation for everyone, including admins. A donor's write to someone else's donation, or a requester's write to someone else's request, is rejected by Firestore itself — verified directly against a real Firestore emulator in `test/rules.test.js` (see below), not just by not showing the button in the UI.
+
+**The matching engine / admin boundary — a deliberate scope decision, not an oversight.** `runFulfillment()` (Phase 3's partial-allocation logic, completely unchanged) necessarily mutates *other* users' donations as it allocates and moves *other* users' requests between collections. Under a strict per-owner model that can only be a privileged operation, so Phase 4 restricts *triggering* it — and the two "purge expired stock" / "create in requests_pending or requests_fulfilled" actions that go with it — to admins, both in the UI (moved to the new Admin page) and in the rules (`isAdmin()` bypass). Donors and requesters keep a self-scoped version of the "remove expired stock" action (`expireMyDonations`) that only touches their own donations. This is the one place the rules and the "preserve the matching engine" requirement are in real tension, and admin-gating the trigger is how they're reconciled without reopening cross-owner writes to everyone.
+
+**UI.** Three new role-scoped pages reuse the existing visual system: **My Donations** (donor — log donation with food/category, quantity, prep time, pickup time, expiry, location, description, allergen info; list with status tags; basic stats; self-scoped expiry purge), **My Requests** (requester — submit with quantity, food/category, urgency, beneficiary count, location, needed-by time, dietary notes; list with status; basic stats), and **Admin** (user list with role dropdown + suspend toggle per user, disabled for the admin's own row; the matching-engine trigger and the all-donors expiry purge, moved here from the old Requests/Donations pages). The original Donors/Donations/Requests pages are kept as shared, read-only browsing views — their write forms were removed rather than merely hidden, since under the new rules a non-owner's submission through them would just fail. All new forms have client-side validation (required fields, quantity > 0, expiry not in the past), disable their submit button while saving, and show specific error messages rather than a generic failure string. The signed-in user's profile is watched in real time (`onSnapshot`), so a role claim or an admin-issued suspension takes effect immediately without a manual reload.
+
+**Files changed:** `firestore.rules` (rewritten — ownership + role model), `firebase-app.js` (role/admin functions, ownership-aware `addDonation`/`submitRequest`/donor-profile management, `makeRequest`'s extra-fields param — all additive, no existing exported function signature was removed or had its required arguments changed), `FirebaseEdition/index.html` (role gate, suspended gate, three new pages, admin panel, nav role-visibility, removed legacy write forms), `firebase.json` (Firestore emulator config), `package.json` (`test:rules` / `test:all` scripts), `test/rules.test.js` (new — 20+ ownership/role/admin security-rules tests against the real emulator), `README.md`.
+
+**Tests.** `npm test` (the Phase 3 matching suite) still passes 13/13 — nothing in it changed, and no exported function it depends on had its behavior altered. `test/rules.test.js` covers exactly the scenarios the spec called out — donor A can't touch donor B's donation, requester A can't touch requester B's request, no self-role-escalation (including for admins), a suspended account can't write, a non-admin can't reach admin-only paths — and was written and reviewed carefully, but **could not be executed in the environment this phase was built in**: running it needs the real Firestore emulator, and `firebase emulators:exec` downloads that emulator jar from `storage.googleapis.com` on first use, which that environment's network egress policy blocks (confirmed via the proxy's own status endpoint — a `connect_rejected`/403 policy denial, not a transient failure). Run `npm run test:rules` (or `npm run test:all`) anywhere with normal internet access — a real machine or CI — to execute it; nothing about the test file itself depends on that environment.
+
+**Known gaps after Phase 4:**
+- The rules-unit-test suite is written but unverified by execution (see above) — treat it as a strong first pass, and re-review it once it's actually been run, rather than as proven-correct.
+- No UI for a donor to edit their donor-registry profile (name/contact/type/address) beyond what `updateDonorProfile()` in `firebase-app.js` already supports — there's no form wired to it yet.
+- `donationId`/`requestId` are now Firestore auto-IDs instead of the old hand-typed numbers; anything outside this app (a script, a demo walkthrough) that assumed small sequential IDs will need updating.
+- No audit log of who changed a role or suspended an account (spec §24, explicitly out of scope for this phase).
+- Admin's own role/suspension can never be changed by anyone via the app once they're the only admin — the recovery path (another admin does it, or a direct Firestore Console edit, which bypasses rules) should be documented for whoever runs this for real.
+
+## 7. Phase 5 candidates (not started)
+
+In rough order of what most naturally follows Phase 4:
+1. **Verification workflow** for donor/requester accounts (PENDING/APPROVED/REJECTED), since the role system Phase 4 built is the actual prerequisite for it.
+2. **Delivery workflow** — volunteer role, RESERVED→PICKED_UP→DELIVERING→DELIVERED state transitions logged against a request.
+3. **Notifications** — at minimum, a requester learning their request was fulfilled without having to check the dashboard.
+4. **File uploads** (Firebase Storage) for verification documents.
+5. **Audit log**, admin-only, once there's more than role/suspension changes worth logging.
+
+Per the original scope note in §0: treat this as a menu, not a mandate — decide which of these (if any) are worth building before starting.

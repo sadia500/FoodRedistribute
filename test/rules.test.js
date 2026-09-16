@@ -86,6 +86,14 @@ async function seedVerification(uid, status, extra = {}) {
     ...extra
   }));
 }
+async function seedDelivery(id, extra = {}) {
+  await seed(db => db.collection("deliveries").doc(id).set({
+    requestId: "f1", donorOwnerId: "donorA", requesterOwnerId: "reqA",
+    volunteerId: null, status: "AVAILABLE",
+    foodType: "Rice", quantity: 5, fromLocation: "Clifton", toLocation: "Saddar",
+    recipientName: "R", ...extra
+  }));
+}
 
 // ---- signed-out has no access at all ---------------------------------------
 
@@ -325,6 +333,137 @@ test("nobody, including admins, can delete a user profile", async () => {
   await assertFails(db.collection("users").doc("plain").delete());
 });
 
+// ---- Phase 6: delivery workflow --------------------------------------------
+
+test("anyone signed in can read the deliveries collection", async () => {
+  await seedUser("plain", "donor");
+  await seedDelivery("del1");
+  const db = asUser("plain");
+  await assertSucceeds(db.collection("deliveries").doc("del1").get());
+});
+
+test("a non-admin cannot directly create a delivery (matching-engine-only path)", async () => {
+  await seedUser("vol1", "volunteer");
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").set({
+    requestId: "f1", donorOwnerId: "donorA", requesterOwnerId: "reqA",
+    volunteerId: null, status: "AVAILABLE", foodType: "Rice", quantity: 5,
+    fromLocation: "Clifton", toLocation: "Saddar", recipientName: "R"
+  }));
+});
+
+test("an admin can create a delivery on behalf of the matching engine", async () => {
+  await seedUser("admin1", "admin");
+  const db = asUser("admin1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").set({
+    requestId: "f1", donorOwnerId: "donorA", requesterOwnerId: "reqA",
+    volunteerId: null, status: "AVAILABLE", foodType: "Rice", quantity: 5,
+    fromLocation: "Clifton", toLocation: "Saddar", recipientName: "R"
+  }));
+});
+
+test("an admin cannot create a delivery that isn't AVAILABLE with no volunteer yet", async () => {
+  await seedUser("admin1", "admin");
+  const db = asUser("admin1");
+  await assertFails(db.collection("deliveries").doc("del1").set({
+    requestId: "f1", donorOwnerId: "donorA", requesterOwnerId: "reqA",
+    volunteerId: "vol1", status: "RESERVED", foodType: "Rice", quantity: 5,
+    fromLocation: "Clifton", toLocation: "Saddar", recipientName: "R"
+  }));
+});
+
+test("a volunteer can claim an open delivery job", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1");
+  const db = asUser("vol1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({
+    status: "RESERVED", volunteerId: "vol1"
+  }));
+});
+
+test("a non-volunteer (e.g. a donor) cannot claim a delivery job", async () => {
+  await seedUser("donorA", "donor");
+  await seedDelivery("del1");
+  const db = asUser("donorA");
+  await assertFails(db.collection("deliveries").doc("del1").update({
+    status: "RESERVED", volunteerId: "donorA"
+  }));
+});
+
+test("a volunteer cannot claim a job on someone else's behalf", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1");
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").update({
+    status: "RESERVED", volunteerId: "someone-else"
+  }));
+});
+
+test("a volunteer cannot claim a job another volunteer already claimed (race safety)", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedUser("vol2", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol2");
+  await assertFails(db.collection("deliveries").doc("del1").update({
+    status: "RESERVED", volunteerId: "vol2"
+  }));
+});
+
+test("the assigned volunteer can advance a claimed job one step at a time", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "PICKED_UP" }));
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "DELIVERING" }));
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "DELIVERED" }));
+});
+
+test("a different volunteer cannot advance someone else's claimed job", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedUser("vol2", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol2");
+  await assertFails(db.collection("deliveries").doc("del1").update({ status: "PICKED_UP" }));
+});
+
+test("a job cannot skip states (e.g. RESERVED straight to DELIVERED)", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").update({ status: "DELIVERED" }));
+});
+
+test("identity fields on a delivery are immutable, even for an admin", async () => {
+  await seedUser("admin1", "admin");
+  await seedDelivery("del1");
+  const db = asUser("admin1");
+  await assertFails(db.collection("deliveries").doc("del1").update({ requestId: "someone-elses-request" }));
+  await assertFails(db.collection("deliveries").doc("del1").update({ donorOwnerId: "someone-else" }));
+  await assertFails(db.collection("deliveries").doc("del1").update({ requesterOwnerId: "someone-else" }));
+});
+
+test("an admin can move a stuck job as an override", async () => {
+  await seedUser("admin1", "admin");
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "PICKED_UP", volunteerId: "vol1" });
+  const db = asUser("admin1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "DELIVERING" }));
+});
+
+test("a non-admin cannot delete a delivery", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "DELIVERED", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").delete());
+});
+
+test("an admin can delete a delivery", async () => {
+  await seedUser("admin1", "admin");
+  await seedDelivery("del1");
+  const db = asUser("admin1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").delete());
+});
+
 // ---- Phase 5: verification submission --------------------------------------
 
 test("a donor can submit their own verification", async () => {
@@ -508,6 +647,28 @@ test("a requester cannot file a donor-only audit action (donation_created)", asy
   await assertFails(db.collection("audit_log").add({
     actorId: "req1", actorEmail: "req1@example.com", action: "donation_created",
     targetId: "d1", targetType: "donation", metadata: {}, createdAt: new Date()
+  }));
+});
+
+test("a volunteer can file the delivery_claimed / delivery_status_updated audit actions", async () => {
+  await seedUser("vol1", "volunteer");
+  const db = asUser("vol1");
+  await assertSucceeds(db.collection("audit_log").add({
+    actorId: "vol1", actorEmail: "vol1@example.com", action: "delivery_claimed",
+    targetId: "del1", targetType: "delivery", metadata: {}, createdAt: new Date()
+  }));
+  await assertSucceeds(db.collection("audit_log").add({
+    actorId: "vol1", actorEmail: "vol1@example.com", action: "delivery_status_updated",
+    targetId: "del1", targetType: "delivery", metadata: {}, createdAt: new Date()
+  }));
+});
+
+test("a non-volunteer cannot file a delivery audit action", async () => {
+  await seedUser("donorA", "donor");
+  const db = asUser("donorA");
+  await assertFails(db.collection("audit_log").add({
+    actorId: "donorA", actorEmail: "donorA@example.com", action: "delivery_claimed",
+    targetId: "del1", targetType: "delivery", metadata: {}, createdAt: new Date()
   }));
 });
 

@@ -131,6 +131,7 @@
   .tag.pending{ background:#FBECC8; color:var(--sun-deep); } .tag.fulfilled{ background:#DEEEE1; color:var(--leaf-deep); }
   .tag.partial{ background:#DCE9F2; color:var(--sky); } .tag.admin{ background:#F1DCEA; color:#8A3F73; }
   .tag.donor{ background:#DEEEE1; color:var(--leaf-deep); } .tag.requester{ background:#DCE9F2; color:var(--sky); }
+  .tag.volunteer{ background:#F3E5D8; color:var(--terracotta-deep); }
   .tag.member{ background:#EFE9DE; color:var(--ink-soft); } .tag.suspended{ background:#FBE0DA; color:var(--terracotta-deep); }
   .tag.unverified{ background:#EFE9DE; color:var(--ink-soft); } .tag.verified{ background:#DEEEE1; color:var(--leaf-deep); } .tag.rejected{ background:#FBE0DA; color:var(--terracotta-deep); }
   .verify-panel{ background:var(--paper); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin-bottom:28px; box-shadow:var(--shadow-sm); }
@@ -186,6 +187,11 @@
         <strong>Recipient Organization</strong>
         <span>A hospital, old-age home, or charity requesting food.</span>
       </button>
+      <button type="button" class="role-option" id="claimVolunteerBtn">
+        <span class="role-ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M7 17V9l5-5 5 5v8"/><path d="M10 17v-4h4v4"/></svg></span>
+        <strong>Volunteer</strong>
+        <span>Pick up and deliver fulfilled requests between donor and recipient.</span>
+      </button>
     </div>
     <div class="msg" id="roleMsg"></div>
   </div>
@@ -209,6 +215,7 @@
     <div class="nav-item active" data-page="overview"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg></span>Overview</div>
     <div class="nav-item" data-page="donor" data-role="donor"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/></svg></span>My Donations</div>
     <div class="nav-item" data-page="requester" data-role="requester"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 11h8M8 15h5"/></svg></span>My Requests</div>
+    <div class="nav-item" data-page="deliveries" data-role="volunteer"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M7 17V9l5-5 5 5v8"/><path d="M10 17v-4h4v4"/></svg></span>My Deliveries</div>
     <div class="nav-item" data-page="admin" data-role="admin"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></span>Admin</div>
     <div class="nav-item" data-page="donors"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8.3" r="2.2"/><path d="M15.3 13.2c2.3.5 3.7 2.4 4.2 5"/></svg></span>Donors</div>
     <div class="nav-item" data-page="donations"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-2 11H5L3 8Z"/><path d="M3 8 6 4h12l3 4"/><path d="M9 12v4M15 12v4"/></svg></span>Donations</div>
@@ -340,6 +347,21 @@
     </div>
   </div>
 
+  <div class="page" id="page-deliveries">
+    <h1>My Deliveries</h1>
+    <p class="page-sub">Claim an open delivery job, then move it through pickup and drop-off. Only you (or an admin) can advance a job once you've claimed it — enforced by Firestore rules, not just hidden here.</p>
+    <div class="two-col">
+      <div>
+        <div class="block-title">Available jobs</div>
+        <div id="availableDeliveriesList"><div class="empty loading">Loading…</div></div>
+      </div>
+      <div>
+        <div class="block-title">My active deliveries</div>
+        <div id="myDeliveriesList"><div class="empty loading">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
   <div class="page" id="page-admin">
     <h1>Admin</h1>
     <p class="page-sub">Role management, account status, and the matching engine — restricted to admins, and enforced by Firestore rules, not just hidden here.</p>
@@ -437,7 +459,7 @@ function animateNumber(el, newVal){
 }
 
 async function refreshAll(){
-  const { donors, donations, urgentPQ, pendingQueue, fulfilledStack } = window.FRS.getState();
+  const { donors, donations, urgentPQ, pendingQueue, fulfilledStack, deliveries } = window.FRS.getState();
 
   animateNumber(document.getElementById("statUrgent"), urgentPQ.size());
   animateNumber(document.getElementById("statPending"), pendingQueue.size());
@@ -473,6 +495,7 @@ async function refreshAll(){
 
   if (myRole === "donor") renderDonorDashboard();
   if (myRole === "requester") renderRequesterDashboard();
+  if (myRole === "volunteer") renderVolunteerDashboard();
   if (myRole === "admin") { renderAdminUsers(); renderAdminVerifications(); }
 }
 
@@ -567,6 +590,78 @@ function renderRequesterDashboard(){
   `).join("");
 }
 
+// ---- Volunteer dashboard -------------------------------------------------
+function deliveryStatusTag(status){
+  const labels = { AVAILABLE: "pending", RESERVED: "partial", PICKED_UP: "partial", DELIVERING: "partial", DELIVERED: "fulfilled" };
+  return `<span class="tag ${labels[status] || "pending"}">${status}</span>`;
+}
+
+const NEXT_DELIVERY_LABEL = {
+  RESERVED: "Mark picked up",
+  PICKED_UP: "Mark out for delivery",
+  DELIVERING: "Mark delivered"
+};
+
+function renderVolunteerDashboard(){
+  const { deliveries } = window.FRS.getState();
+  const available = window.FRS.listAvailableDeliveries();
+  const mine = window.FRS.listMyDeliveries();
+
+  const availEl = document.getElementById("availableDeliveriesList");
+  availEl.innerHTML = available.length ? available.map(d => `
+    <div class="log-item"><div class="log-main">
+      <div><strong>${d.quantity} ${d.foodType}</strong> for ${d.recipientName}</div>
+      <div class="log-route">${d.fromLocation} &rarr; ${d.toLocation}</div>
+    </div>
+    <div class="row-actions">
+      ${deliveryStatusTag(d.status)}
+      <button type="button" data-claim-delivery="${d._id}">Claim</button>
+    </div></div>
+  `).join("") : '<div class="empty">No open delivery jobs right now.</div>';
+
+  availEl.querySelectorAll("[data-claim-delivery]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true; btn.textContent = "Claiming…";
+      try {
+        await window.FRS.claimDelivery(btn.dataset.claimDelivery);
+        await window.FRS.loadAllState(); await refreshAll();
+      } catch (e) {
+        alert(e.message || "Couldn't claim that delivery.");
+        btn.disabled = false; btn.textContent = "Claim";
+      }
+    });
+  });
+
+  const mineEl = document.getElementById("myDeliveriesList");
+  if (!mine.length) {
+    mineEl.innerHTML = '<div class="empty">You haven\'t claimed any deliveries yet — claim an open job from the list on the left.</div>';
+    return;
+  }
+  mineEl.innerHTML = mine.map(d => `
+    <div class="log-item"><div class="log-main">
+      <div><strong>${d.quantity} ${d.foodType}</strong> for ${d.recipientName}</div>
+      <div class="log-route">${d.fromLocation} &rarr; ${d.toLocation}</div>
+    </div>
+    <div class="row-actions">
+      ${deliveryStatusTag(d.status)}
+      ${NEXT_DELIVERY_LABEL[d.status] ? `<button type="button" data-advance-delivery="${d._id}">${NEXT_DELIVERY_LABEL[d.status]}</button>` : ""}
+    </div></div>
+  `).join("");
+
+  mineEl.querySelectorAll("[data-advance-delivery]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true; const original = btn.textContent; btn.textContent = "Updating…";
+      try {
+        await window.FRS.advanceDeliveryStatus(btn.dataset.advanceDelivery);
+        await window.FRS.loadAllState(); await refreshAll();
+      } catch (e) {
+        alert(e.message || "Couldn't update that delivery.");
+        btn.disabled = false; btn.textContent = original;
+      }
+    });
+  });
+}
+
 // ---- Admin dashboard -----------------------------------------------------
 function roleTagClass(role){
   if (role === "admin") return "admin";
@@ -595,7 +690,7 @@ async function renderAdminUsers(){
         <td class="row-actions">
           ${u._id === myUid ? '<span class="hint">This is you</span>' : `
             <select class="role-select" data-action="role" data-uid="${u._id}" data-current-role="${u.role || "member"}">
-              ${["member","donor","requester","admin"].map(r => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}
+              ${["member","donor","requester","volunteer","admin"].map(r => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}
             </select>
             <button type="button" class="secondary" data-action="suspend" data-uid="${u._id}" data-suspended="${!!u.suspended}">
               ${u.suspended ? "Unsuspend" : "Suspend"}
@@ -984,10 +1079,11 @@ function showGate(which){
 
 document.getElementById("claimDonorBtn").addEventListener("click", () => claimRole("donor"));
 document.getElementById("claimRequesterBtn").addEventListener("click", () => claimRole("requester"));
+document.getElementById("claimVolunteerBtn").addEventListener("click", () => claimRole("volunteer"));
 async function claimRole(role){
   const msg = document.getElementById("roleMsg");
-  document.getElementById("claimDonorBtn").disabled = true;
-  document.getElementById("claimRequesterBtn").disabled = true;
+  const roleBtns = ["claimDonorBtn", "claimRequesterBtn", "claimVolunteerBtn"].map(id => document.getElementById(id));
+  roleBtns.forEach(btn => btn.disabled = true);
   msg.textContent = ""; msg.className = "msg";
   try {
     await window.FRS.claimRole(role);
@@ -996,8 +1092,7 @@ async function claimRole(role){
   } catch (err) {
     msg.textContent = err.message || "Couldn't save that — please try again.";
     msg.className = "msg err";
-    document.getElementById("claimDonorBtn").disabled = false;
-    document.getElementById("claimRequesterBtn").disabled = false;
+    roleBtns.forEach(btn => btn.disabled = false);
   }
 }
 

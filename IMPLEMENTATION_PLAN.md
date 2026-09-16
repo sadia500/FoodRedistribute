@@ -166,13 +166,43 @@ The other helper functions (`isAdmin()`, `isActiveWriter()`, `isOwner()`) were c
 - The client-stamped audit log limitation above — a genuinely tamper-proof trail needs a backend.
 - Still no audit log of the log's own denials (i.e. no record of *attempted* unauthorized actions) — only successful, permitted ones are recorded, which is normal for an audit trail but worth naming.
 
-## 8. Phase 6 candidates (not started)
+## 8. Phase 6 — Delivery Workflow (done)
 
-In rough order of what most naturally follows Phase 5:
-1. **Delivery workflow** — volunteer role, RESERVED→PICKED_UP→DELIVERING→DELIVERED state transitions logged against a request (the audit log already has a `match_allocated` action to extend from).
-2. **Notifications** — at minimum, a requester learning their request was fulfilled, or a donor/requester learning their verification was reviewed, without having to check the dashboard.
-3. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
-4. **Audit log viewer** in the Admin UI — the data already exists and is protected; this is a read-only screen over it.
+**Goal:** get a fulfilled request from the donor's shelf to the recipient's door, tracked in the system rather than assumed to happen off-app. Built on top of Phase 4's ownership model and Phase 5's audit log, without touching either.
+
+**Volunteer role.** A third claimable role alongside `donor`/`requester` — `claimRole('volunteer')` — same one-time, self-claim, never-admin rules as before (see Phase 4). A volunteer has no donations or requests of their own; their whole surface is the new "My Deliveries" page.
+
+**The `deliveries/{deliveryId}` collection and its state machine.** One doc per successfully matched request, `AVAILABLE → RESERVED → PICKED_UP → DELIVERING → DELIVERED`:
+- **Created only by the matching engine's own batch** (`runFulfillment()`, admin-triggered — same design reasoning as `requests_fulfilled` in Phase 4), in status `AVAILABLE` with `volunteerId: null` — an open job any active volunteer can see and take. `firestore.rules` rejects a direct client create of anything else (a delivery that starts already `RESERVED`, say).
+- **Claiming (`AVAILABLE → RESERVED`)** is open to any active volunteer, who assigns themselves as `volunteerId` in the same write. This is race-safe *without a client-side transaction*: Firestore rules evaluate against the live server document at write time, so if two volunteers tap "Claim" on the same job at once, whichever write lands first flips the doc to `RESERVED`, and the second write is evaluated against that already-claimed document and denied by rules — no transaction needed on the client for this to be correct.
+- **Every transition after that** (`RESERVED → PICKED_UP → DELIVERING → DELIVERED`) belongs exclusively to whichever volunteer claimed the job (`request.auth.uid == resource.data.volunteerId`), one step at a time — the rules enumerate each specific `fromStatus → toStatus` pair, so writing `DELIVERED` straight from `RESERVED` matches none of them and is denied. `volunteerId` itself can never change once set.
+- **Admin override** — same "trusted operator, not a free-for-all" bypass pattern used everywhere else in this file — can move a stuck job or fix a mistake.
+- **Identity fields** (`requestId`, `donorOwnerId`, `requesterOwnerId`) are immutable once the job exists, for anyone, including admins.
+- **Delete is admin-only.**
+
+**Hooked into the matching engine, not bolted on.** `runFulfillment()`'s existing batch — the same one that writes the `requests_fulfilled` doc and decrements donation quantities — now also creates the matching `deliveries` doc in the same atomic batch, so a fulfilled request can never exist without an open delivery job (or vice versa). `donorOwnerId` is taken from the primary (largest-contribution) donation, matching the route already computed for that allocation.
+
+**UI.** A new "My Deliveries" page, visible only to volunteers (same nav-visibility pattern as "My Donations"/"My Requests"): an *Available jobs* list with a Claim button, and a *My active deliveries* list with a context-appropriate "advance" button (its label changes with the job's current status — "Mark picked up", "Mark out for delivery", "Mark delivered"). Role gate gained a third option card; the admin user-management dropdown gained `volunteer` as an assignable role.
+
+**Audit log.** Two new actions extend `auditActorAuthorized()`: `delivery_claimed` and `delivery_status_updated`, both gated to `myRole() == 'volunteer'` — the same client-stamped, append-only trail Phase 5 built, not a new mechanism.
+
+**Files changed:** `firestore.rules` (added `deliveryIdentityUnchanged()` and the `deliveries/{deliveryId}` match block; extended the `users/{userId}` role-claim list and `auditActorAuthorized()` — both additive, nothing in the Phase 4/5 rules for `users`/`donations`/`donors`/`requests_*`/`verifications`/`audit_log` was touched), `firebase-app.js` (`claimRole()` now accepts `'volunteer'`; delivery-doc creation added to `runFulfillment()`'s batch; new `listAvailableDeliveries`/`listMyDeliveries`/`watchDeliveries`/`claimDelivery`/`advanceDeliveryStatus`; `deliveries` added to the in-memory state loaded by `loadAllState()` — all additive, no existing exported function had its signature changed), `FirebaseEdition/index.html` ("Volunteer" role-gate option, "My Deliveries" nav item and page, admin role-select gained `volunteer`), `test/rules.test.js` (17 new Phase 6 cases alongside the 52 from Phase 4/5 — 69 total), `README.md`.
+
+**Tests.** `npm test` (the Phase 3 matching suite): still 13/13, untouched — nothing in this phase touches matching/routing logic. `npm run test:rules`, run against the real Firestore emulator on the developer's own machine (same setup that caught and fixed the Phase 4/5 `myRole()` bug): **69/69 passing** — claim race-safety (a second volunteer's claim on an already-claimed job is denied), sequential-only transitions (skipping straight to `DELIVERED` is denied), ownership (a different volunteer can't advance someone else's claimed job), immutable identity fields (even for an admin), the admin override, non-admin direct-create denial, and audit-log authorization for both new actions.
+
+**Known gaps after Phase 6:**
+- No notification when a job becomes available or changes status — a volunteer has to have the page open (or reload it) to see new jobs; see Phase 6 candidates below for a notifications feature that would cover this too.
+- No in-app map or distance/time estimate for a delivery job — `fromLocation`/`toLocation` are shown as the same city-neighborhood names used elsewhere in the app, with no route visualization on the deliveries page itself (Route Finder is a separate, unrelated page).
+- No "un-claim" / hand-back path if a volunteer claims a job and can no longer do it — only an admin override can currently move it, there's no self-service release back to `AVAILABLE`.
+- Same client-stamped audit log limitation as Phase 5 — still not backend-enforced.
+
+## 9. Phase 7 candidates (not started)
+
+In rough order of what most naturally follows Phase 6:
+1. **Notifications** — at minimum, a requester learning their request was fulfilled, a donor/requester learning their verification was reviewed, or a volunteer learning a new job is available, without having to check the dashboard.
+2. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
+3. **Audit log viewer** in the Admin UI — the data already exists and is protected; this is a read-only screen over it.
+4. **Delivery job release** — let a volunteer hand a claimed job back to `AVAILABLE` if they can no longer do it, rather than needing an admin override.
 5. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
 
 Per the original scope note in §0: treat this as a menu, not a mandate — decide which of these (if any) are worth building before starting.

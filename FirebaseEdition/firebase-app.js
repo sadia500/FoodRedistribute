@@ -98,8 +98,8 @@ function onAuthChange(callback) {
 // and only to 'donor' or 'requester' — the rule itself is what actually
 // stops anyone from claiming 'admin', this is just the client-side call).
 async function claimRole(role) {
-  if (role !== "donor" && role !== "requester") {
-    throw new Error("Role must be 'donor' or 'requester'.");
+  if (!["donor", "requester", "volunteer"].includes(role)) {
+    throw new Error("Role must be 'donor', 'requester', or 'volunteer'.");
   }
   const uid = auth.currentUser.uid;
   await db.collection("users").doc(uid).update({ role });
@@ -404,14 +404,16 @@ let donations = [];
 let urgentPQ = new PriorityQueue(requestLessThan);
 let pendingQueue = new Queue();
 let fulfilledStack = new Stack();
+let deliveries = [];
 
 async function loadAllState() {
-  const [donorsSnap, donationsSnap, urgentSnap, pendingSnap, fulfilledSnap] = await Promise.all([
+  const [donorsSnap, donationsSnap, urgentSnap, pendingSnap, fulfilledSnap, deliveriesSnap] = await Promise.all([
     db.collection("donors").orderBy("id").get(),
     db.collection("donations").orderBy("donationId").get(),
     db.collection("requests_urgent").orderBy("createdAt").get(),
     db.collection("requests_pending").orderBy("createdAt").get(),
-    db.collection("requests_fulfilled").orderBy("createdAt").get()
+    db.collection("requests_fulfilled").orderBy("createdAt").get(),
+    db.collection("deliveries").orderBy("createdAt").get()
   ]);
 
   donors = donorsSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
@@ -425,6 +427,8 @@ async function loadAllState() {
 
   fulfilledStack = new Stack();
   fulfilledSnap.docs.forEach(d => fulfilledStack.push({ _id: d.id, ...d.data() }));
+
+  deliveries = deliveriesSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
 }
 
 // ---- 7. Actions (mirror the API routes in server_main.cpp) -----------------
@@ -592,6 +596,26 @@ async function runFulfillment() {
       const fulfilledRef = db.collection("requests_fulfilled").doc();
       batch.set(fulfilledRef, { ...stripMeta(r), createdAt: firebase.firestore.FieldValue.serverTimestamp() });
 
+      // Phase 6: open a delivery job for this fulfilled request, ready for
+      // any volunteer to claim. donorOwnerId is the primary (largest-
+      // contribution) donation's owner -- the same donor the route above is
+      // computed from -- so the volunteer's pickup address matches the
+      // route they see.
+      const deliveryRef = db.collection("deliveries").doc();
+      batch.set(deliveryRef, {
+        requestId: fulfilledRef.id,
+        donorOwnerId: allocations[0].donation.ownerId,
+        requesterOwnerId: r.ownerId,
+        volunteerId: null,
+        status: "AVAILABLE",
+        foodType: r.foodType,
+        quantity: r.quantity,
+        fromLocation: primaryLocation,
+        toLocation: r.location,
+        recipientName: r.recipientName,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
       results.push({
         status: "fulfilled", request: r, fromLocation: primaryLocation, route,
         splitAcross: allocations.length, donorLocations
@@ -650,13 +674,70 @@ function stripMeta(r) {
   return rest;
 }
 
+// ---- 8. Delivery workflow (Phase 6) ----------------------------------------
+// deliveries/{id}: created (admin-only, via runFulfillment's batch above) in
+// status 'AVAILABLE' with volunteerId == null for every successfully
+// matched request. Any active volunteer can claim an open job
+// (AVAILABLE -> RESERVED, assigning themselves); after that only the
+// assigned volunteer can advance it, one step at a time:
+// RESERVED -> PICKED_UP -> DELIVERING -> DELIVERED. firestore.rules is what
+// actually enforces the ownership/sequencing (see the "Phase 6" block
+// there) -- these are just the client calls, plus client-side filtering of
+// the shared `deliveries` read.
+
+function listAvailableDeliveries() {
+  return deliveries.filter(d => d.status === "AVAILABLE");
+}
+
+function listMyDeliveries() {
+  const uid = auth.currentUser ? auth.currentUser.uid : null;
+  return deliveries.filter(d => d.volunteerId === uid);
+}
+
+// Real-time feed of every delivery doc (read is open to any signed-in user
+// per firestore.rules; the UI does the AVAILABLE-vs-mine filtering
+// client-side with the two helpers above).
+function watchDeliveries(callback) {
+  return db.collection("deliveries").orderBy("createdAt").onSnapshot(snap => {
+    deliveries = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    callback(deliveries);
+  });
+}
+
+async function claimDelivery(deliveryId) {
+  const uid = auth.currentUser.uid;
+  await db.collection("deliveries").doc(deliveryId).update({
+    status: "RESERVED",
+    volunteerId: uid
+  });
+  await logAction("delivery_claimed", { targetId: deliveryId, targetType: "delivery" });
+}
+
+const NEXT_DELIVERY_STATUS = {
+  RESERVED: "PICKED_UP",
+  PICKED_UP: "DELIVERING",
+  DELIVERING: "DELIVERED"
+};
+
+// Advances a delivery exactly one step -- matches the sequential-only
+// transitions firestore.rules enforces; there is no "skip to DELIVERED".
+async function advanceDeliveryStatus(deliveryId) {
+  const delivery = deliveries.find(d => d._id === deliveryId);
+  if (!delivery) throw new Error("Delivery not found.");
+  const next = NEXT_DELIVERY_STATUS[delivery.status];
+  if (!next) throw new Error(`Delivery is already ${delivery.status}.`);
+  await db.collection("deliveries").doc(deliveryId).update({ status: next });
+  await logAction("delivery_status_updated", { targetId: deliveryId, targetType: "delivery",
+    metadata: { from: delivery.status, to: next } });
+}
+
 // Exposed for the page's UI code
 window.FRS = {
   karachiLocations, roadMap, roadEdges, shortestPath,
   loadAllState, addDonor, addDonation, cancelMyDonation, expireDonations, expireMyDonations,
   submitRequest, runFulfillment,
   ensureDonorProfile, updateDonorProfile,
-  getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack }),
+  getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack, deliveries }),
   // Auth / roles
   signUp, signIn, signOutUser, sendPasswordReset, onAuthChange,
   getCurrentUser: () => auth.currentUser,
@@ -665,6 +746,8 @@ window.FRS = {
   getMyVerification, watchMyVerification, submitVerification,
   // Admin
   listUsers, setUserRole, setUserSuspended, listVerifications, setVerificationStatus,
+  // Delivery workflow (Phase 6)
+  listAvailableDeliveries, listMyDeliveries, watchDeliveries, claimDelivery, advanceDeliveryStatus,
   // Exposed for the test suite (test/*.test.js) — these are pure/isolated
   // enough to unit test directly without a Firestore connection.
   Stack, Queue, PriorityQueue, makeRequest, findMatchingDonations

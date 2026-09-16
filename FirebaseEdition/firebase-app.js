@@ -25,6 +25,28 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
 
+// ---- 1a. Audit log ----------------------------------------------------------
+// Phase 5: a best-effort, append-only trail of the actions the spec calls
+// out (see firestore.rules for exactly what each action requires of the
+// writer). Logging NEVER blocks or fails the real action it's describing —
+// the log write happens after the real write has already succeeded, and a
+// failed/denied log write is swallowed (logged to the console, not thrown)
+// so a rules mismatch on the audit trail can't take down the feature it's
+// auditing.
+async function logAction(action, { targetId = null, targetType = null, metadata = {} } = {}) {
+  if (!auth.currentUser) return;
+  try {
+    await db.collection("audit_log").add({
+      actorId: auth.currentUser.uid,
+      actorEmail: auth.currentUser.email || null,
+      action, targetId, targetType, metadata,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (e) {
+    console.error("audit log write failed (action not blocked):", action, e);
+  }
+}
+
 // ---- 1b. Authentication ----------------------------------------------------
 // Every signed-in user gets a profile document at users/{uid} on first
 // sign-in. Firestore rules (see firestore.rules) require request.auth to be
@@ -45,6 +67,7 @@ async function ensureUserProfile(user) {
       suspended: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+    await logAction("user_registered", { targetId: user.uid, targetType: "user" });
   }
 }
 
@@ -78,7 +101,9 @@ async function claimRole(role) {
   if (role !== "donor" && role !== "requester") {
     throw new Error("Role must be 'donor' or 'requester'.");
   }
-  await db.collection("users").doc(auth.currentUser.uid).update({ role });
+  const uid = auth.currentUser.uid;
+  await db.collection("users").doc(uid).update({ role });
+  await logAction("role_assigned", { targetId: uid, targetType: "user", metadata: { role, self: true } });
 }
 
 async function getMyProfile() {
@@ -112,10 +137,81 @@ async function setUserRole(uid, role) {
     throw new Error("Invalid role.");
   }
   await db.collection("users").doc(uid).update({ role });
+  await logAction("role_assigned", { targetId: uid, targetType: "user", metadata: { role, self: false } });
 }
 
 async function setUserSuspended(uid, suspended) {
   await db.collection("users").doc(uid).update({ suspended: !!suspended });
+  await logAction(suspended ? "account_suspended" : "account_unsuspended", { targetId: uid, targetType: "user" });
+}
+
+// ---- 1d. Account verification -----------------------------------------------
+// Phase 5: verifications/{uid}, one doc per user. No doc = 'unverified'.
+// A donor/requester submits their own info (status forced to 'pending' by
+// firestore.rules) and may resubmit after a rejection; only an admin can
+// move it to 'verified' or 'rejected' (see firestore.rules for the exact
+// state-machine enforcement — this is just the client shape of the writes).
+
+async function getMyVerification() {
+  const snap = await db.collection("verifications").doc(auth.currentUser.uid).get();
+  return snap.exists ? snap.data() : null;
+}
+
+// Real-time, same reasoning as watchMyProfile — an admin's approve/reject
+// should show up immediately without a manual reload.
+function watchMyVerification(callback) {
+  return db.collection("verifications").doc(auth.currentUser.uid)
+    .onSnapshot(snap => callback(snap.exists ? snap.data() : null));
+}
+
+async function submitVerification(info) {
+  const uid = auth.currentUser.uid;
+  const ref = db.collection("verifications").doc(uid);
+  const snap = await ref.get();
+  const payload = {
+    businessName: info.businessName || "",
+    registrationNumber: info.registrationNumber || "",
+    contactPhone: info.contactPhone || "",
+    address: info.address || "",
+    description: info.description || ""
+  };
+  if (!snap.exists) {
+    await ref.set({
+      ownerId: uid,
+      status: "pending",
+      info: payload,
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      reviewedBy: null, reviewedAt: null, reviewNote: ""
+    });
+  } else {
+    // Resubmission — only legal (per firestore.rules) when the current
+    // status is 'rejected'; anything else and the write itself is denied.
+    await ref.update({
+      status: "pending",
+      info: payload,
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+  await logAction("verification_submitted", { targetId: uid, targetType: "verification" });
+}
+
+async function listVerifications() {
+  const snap = await db.collection("verifications").get();
+  return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+}
+
+async function setVerificationStatus(uid, status, reviewNote = "") {
+  if (status !== "verified" && status !== "rejected") {
+    throw new Error("Status must be 'verified' or 'rejected'.");
+  }
+  await db.collection("verifications").doc(uid).update({
+    status,
+    reviewedBy: auth.currentUser.uid,
+    reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    reviewNote
+  });
+  await logAction(status === "verified" ? "verification_approved" : "verification_rejected",
+    { targetId: uid, targetType: "verification", metadata: { reviewNote } });
 }
 
 // ---- 2. DSA structures — same behavior as the C++ classes ------------------
@@ -401,7 +497,24 @@ async function addDonation(fields) {
     description: fields.description || "",
     allergenInfo: fields.allergenInfo || ""
   });
+  await logAction("donation_created", { targetId: donationId, targetType: "donation",
+    metadata: { foodType: fields.foodType, quantity } });
   return donationId;
+}
+
+// Donor dashboard "cancel" — deletes one of the signed-in donor's own
+// donations (allowed by the isOwner() branch in firestore.rules; nothing
+// but the owner or an admin can delete a donation at all). The UI asks for
+// confirmation before calling this, since it's destructive and irreversible.
+async function cancelMyDonation(donationId) {
+  const uid = auth.currentUser.uid;
+  const donation = donations.find(d => d._id === donationId);
+  if (!donation || donation.ownerId !== uid) {
+    throw new Error("You can only cancel your own donations.");
+  }
+  await db.collection("donations").doc(donationId).delete();
+  await logAction("donation_cancelled", { targetId: donationId, targetType: "donation",
+    metadata: { foodType: donation.foodType, remainingQuantity: donation.quantity } });
 }
 
 // Admin maintenance: purge every expired donation regardless of owner
@@ -427,7 +540,9 @@ async function submitRequest({ recipientName, foodType, quantity, organizationTy
   const r = makeRequest(recipientName, foodType, quantity, organizationType, organizationName, location, requestDate, {
     ...extra, ownerId: uid
   });
-  await db.collection("requests_urgent").add({ ...r, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+  const ref = await db.collection("requests_urgent").add({ ...r, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+  await logAction("request_created", { targetId: ref.id, targetType: "request",
+    metadata: { foodType, quantity } });
 }
 
 // Drains the urgent PriorityQueue, attempting to allocate each request
@@ -511,6 +626,21 @@ async function runFulfillment() {
 
   toDelete.forEach(id => batch.delete(db.collection("requests_urgent").doc(id)));
   await batch.commit();
+
+  // Logged after the batch commits, not inside it — a denied/failed audit
+  // write must never roll back (or block) a real, already-successful
+  // matching run. One entry per fulfilled allocation (spec: "match/
+  // allocation events"); pending outcomes aren't a match, so nothing to log.
+  await Promise.all(
+    results.filter(r => r.status === "fulfilled").map(r => logAction("match_allocated", {
+      targetId: r.request._id || null, targetType: "request",
+      metadata: {
+        foodType: r.request.foodType, quantity: r.request.quantity,
+        splitAcross: r.splitAcross, sourceDonations: r.request.sourceDonations
+      }
+    }))
+  );
+
   await loadAllState();
   return results;
 }
@@ -523,7 +653,7 @@ function stripMeta(r) {
 // Exposed for the page's UI code
 window.FRS = {
   karachiLocations, roadMap, roadEdges, shortestPath,
-  loadAllState, addDonor, addDonation, expireDonations, expireMyDonations,
+  loadAllState, addDonor, addDonation, cancelMyDonation, expireDonations, expireMyDonations,
   submitRequest, runFulfillment,
   ensureDonorProfile, updateDonorProfile,
   getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack }),
@@ -531,8 +661,10 @@ window.FRS = {
   signUp, signIn, signOutUser, sendPasswordReset, onAuthChange,
   getCurrentUser: () => auth.currentUser,
   getMyUid, claimRole, getMyProfile, watchMyProfile,
+  // Verification
+  getMyVerification, watchMyVerification, submitVerification,
   // Admin
-  listUsers, setUserRole, setUserSuspended,
+  listUsers, setUserRole, setUserSuspended, listVerifications, setVerificationStatus,
   // Exposed for the test suite (test/*.test.js) — these are pure/isolated
   // enough to unit test directly without a Firestore connection.
   Stack, Queue, PriorityQueue, makeRequest, findMatchingDonations

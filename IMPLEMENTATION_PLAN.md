@@ -110,10 +110,10 @@ Phases 1 (auth + locked-down rules), 2 (the "Urgent requests waiting" race fixed
 
 **Files changed:** `firestore.rules` (rewritten — ownership + role model), `firebase-app.js` (role/admin functions, ownership-aware `addDonation`/`submitRequest`/donor-profile management, `makeRequest`'s extra-fields param — all additive, no existing exported function signature was removed or had its required arguments changed), `FirebaseEdition/index.html` (role gate, suspended gate, three new pages, admin panel, nav role-visibility, removed legacy write forms), `firebase.json` (Firestore emulator config), `package.json` (`test:rules` / `test:all` scripts), `test/rules.test.js` (new — 20+ ownership/role/admin security-rules tests against the real emulator), `README.md`.
 
-**Tests.** `npm test` (the Phase 3 matching suite) still passes 13/13 — nothing in it changed, and no exported function it depends on had its behavior altered. `test/rules.test.js` covers exactly the scenarios the spec called out — donor A can't touch donor B's donation, requester A can't touch requester B's request, no self-role-escalation (including for admins), a suspended account can't write, a non-admin can't reach admin-only paths — and was written and reviewed carefully, but **could not be executed in the environment this phase was built in**: running it needs the real Firestore emulator, and `firebase emulators:exec` downloads that emulator jar from `storage.googleapis.com` on first use, which that environment's network egress policy blocks (confirmed via the proxy's own status endpoint — a `connect_rejected`/403 policy denial, not a transient failure). Run `npm run test:rules` (or `npm run test:all`) anywhere with normal internet access — a real machine or CI — to execute it; nothing about the test file itself depends on that environment.
+**Tests.** `npm test` (the Phase 3 matching suite) still passes 13/13 — nothing in it changed, and no exported function it depends on had its behavior altered. `test/rules.test.js` covers exactly the scenarios the spec called out — donor A can't touch donor B's donation, requester A can't touch requester B's request, no self-role-escalation (including for admins), a suspended account can't write, a non-admin can't reach admin-only paths — but **could not be executed in the sandbox this phase was originally built in**: running it needs the real Firestore emulator, and `firebase emulators:exec` downloads that emulator jar from `storage.googleapis.com` on first use, which that environment's network egress policy blocks. It was later run for real on the developer's own machine (see the Phase 5 Tests section below, since that's the run that actually executed both phases' rules tests together) and, after a rules bug it uncovered was fixed, passes in full.
 
 **Known gaps after Phase 4:**
-- The rules-unit-test suite is written but unverified by execution (see above) — treat it as a strong first pass, and re-review it once it's actually been run, rather than as proven-correct.
+- The rules-unit-test suite was unverified by execution at the time this phase was written; see the Phase 5 Tests section for the actual run and the bug it found.
 - No UI for a donor to edit their donor-registry profile (name/contact/type/address) beyond what `updateDonorProfile()` in `firebase-app.js` already supports — there's no form wired to it yet.
 - `donationId`/`requestId` are now Firestore auto-IDs instead of the old hand-typed numbers; anything outside this app (a script, a demo walkthrough) that assumed small sequential IDs will need updating.
 - No audit log of who changed a role or suspended an account (spec §24, explicitly out of scope for this phase).
@@ -135,10 +135,32 @@ Phases 1 (auth + locked-down rules), 2 (the "Urgent requests waiting" race fixed
 
 **Files changed:** `firestore.rules` (added `verifications/{uid}` and `audit_log/{logId}`, both additive — nothing in the Phase 4 rules for `users`/`donations`/`donors`/`requests_*` was touched), `firebase-app.js` (`logAction`, `submitVerification`/`getMyVerification`/`watchMyVerification`, admin `listVerifications`/`setVerificationStatus`, `cancelMyDonation`, plus `logAction()` calls added to the existing registration/role/donation/request/matching functions — all additive, no existing exported function had its signature changed), `FirebaseEdition/index.html` (verification panel on the donor/requester dashboards, "Pending verifications" section on the Admin page, cancel-donation control, confirmation dialogs for suspend/promote-to-admin/reject/cancel), `test/rules.test.js` (23 new Phase 5 cases alongside the 29 from Phase 4 — 52 total), `README.md`.
 
-**Tests.** `npm test` (Phase 3's matching suite): still 13/13, untouched. `npm run test:rules`: **could not be executed in this environment** — same limitation as Phase 4, confirmed again before starting this phase and again just now: `firebase emulators:exec` needs to download the Firestore emulator jar from `storage.googleapis.com` on first use, and this sandbox's network egress policy denies that host (a 403 policy denial at the proxy, not a flake — checked via the proxy's own status log both times). The 52 rules tests (29 ownership/role + 23 verification/audit) are written and reviewed but **unverified by execution**; run `npm run test:rules` on a machine or CI with normal internet access to actually confirm them.
+**Tests.** `npm test` (Phase 3's matching suite): still 13/13, untouched. `npm run test:rules` could not be executed in the sandbox both phases were built in — `firebase emulators:exec` needs to download the Firestore emulator jar from `storage.googleapis.com` on first use, and that sandbox's network egress policy denies that host. It has since actually been run, against the real Firestore emulator, on the developer's own machine (which has normal internet access), and that run is what this section now reports.
+
+The first run came back **48/52 passing, 4 failing** — every failure a legitimate "should succeed" create (a donation create, a request create, a verification submit, an audit-log entry), all denied by rules that were supposed to allow them. The root cause was in `myRole()`:
+
+```
+// before (buggy)
+function myRole() {
+  return isSignedIn() && myProfile().role;
+}
+```
+
+Firestore Rules' `&&` requires **both** operands to be boolean — unlike JavaScript, it doesn't short-circuit to "whichever value made it true." The moment a signed-in user actually had a role string to return, this threw a type error (`Received: [string], Expected: [bool]`) instead of returning that string, so every `myRole() == 'donor'` / `myRole() == 'requester'` comparison silently failed closed. It's a subtle bug for exactly the reason it slipped past code review: it only misfires for the *legitimate* case (a real signed-in user with a real role), so every `assertFails` test — which expects a denial anyway — passed regardless, and only the `assertSucceeds` tests exposed it. This is the concrete case the "unverified by execution" caveat in earlier drafts of this doc was flagging: the rules logic looked correct, and 13/13 matching tests plus a careful read gave no indication otherwise, but nothing short of running the actual emulator would have caught it.
+
+The fix replaces the `&&` with a ternary, which has no boolean-operand constraint:
+
+```
+// after (fixed)
+function myRole() {
+  return isSignedIn() ? myProfile().role : null;
+}
+```
+
+The other helper functions (`isAdmin()`, `isActiveWriter()`, `isOwner()`) were checked and don't share this pattern — their right-hand `&&` operands are already boolean comparisons (`== 'admin'`, `!= true`, `== request.auth.uid`), not a raw field value. `npm test` was re-run after the fix (still 13/13, no regression), and a follow-up run of `npm run test:rules` with the fix applied confirmed **52/52 passing** — the full rules-unit-test suite is green end to end.
 
 **Known gaps after Phase 5:**
-- Rules tests remain unexecuted in this environment (see above) — re-review once actually run.
+- Rules tests have now been executed for real (see above), found a genuine bug, and confirmed 52/52 passing after the fix — this loop is closed.
 - Audit log has no UI browser yet (only enforced/written, not displayed) — an admin can't currently see the trail from inside the app, only via the Firestore Console.
 - Verification has two states worth adding later: an admin "resend for more info" that isn't a full rejection, and a way to re-review an already-verified account (e.g. if new information comes to light) — current rules only allow reviewing from `pending`.
 - The client-stamped audit log limitation above — a genuinely tamper-proof trail needs a backend.

@@ -29,6 +29,11 @@ const auth = firebase.auth();
 // Every signed-in user gets a profile document at users/{uid} on first
 // sign-in. Firestore rules (see firestore.rules) require request.auth to be
 // set for every read/write, so nothing below runs for a signed-out visitor.
+//
+// Phase 4: `role` starts as 'member' (unassigned) and is claimed once by the
+// signed-in user via claimRole('donor' | 'requester') — never 'admin', which
+// only an existing admin can grant to someone else (see firestore.rules).
+// `suspended` gates writes without revoking read access.
 
 async function ensureUserProfile(user) {
   const ref = db.collection("users").doc(user.uid);
@@ -37,6 +42,7 @@ async function ensureUserProfile(user) {
     await ref.set({
       email: user.email,
       role: "member",
+      suspended: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -63,6 +69,53 @@ async function signOutUser() {
 
 function onAuthChange(callback) {
   return auth.onAuthStateChanged(callback);
+}
+
+// One-time role claim (see firestore.rules: allowed only from role=='member'
+// and only to 'donor' or 'requester' — the rule itself is what actually
+// stops anyone from claiming 'admin', this is just the client-side call).
+async function claimRole(role) {
+  if (role !== "donor" && role !== "requester") {
+    throw new Error("Role must be 'donor' or 'requester'.");
+  }
+  await db.collection("users").doc(auth.currentUser.uid).update({ role });
+}
+
+async function getMyProfile() {
+  const snap = await db.collection("users").doc(auth.currentUser.uid).get();
+  return snap.exists ? snap.data() : null;
+}
+
+// Real-time profile subscription — used so a role claim or an admin-issued
+// suspension is reflected in the UI immediately, without a manual refresh.
+function watchMyProfile(callback) {
+  return db.collection("users").doc(auth.currentUser.uid)
+    .onSnapshot(snap => callback(snap.exists ? snap.data() : null));
+}
+
+function getMyUid() {
+  return auth.currentUser ? auth.currentUser.uid : null;
+}
+
+// ---- 1c. Admin: user/role management ---------------------------------------
+// All three are also enforced server-side in firestore.rules (an admin can
+// change any OTHER user's role/suspension, never their own) — these client
+// functions exist for the admin UI, not as the security boundary itself.
+
+async function listUsers() {
+  const snap = await db.collection("users").orderBy("email").get();
+  return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+}
+
+async function setUserRole(uid, role) {
+  if (!["donor", "requester", "admin", "member"].includes(role)) {
+    throw new Error("Invalid role.");
+  }
+  await db.collection("users").doc(uid).update({ role });
+}
+
+async function setUserSuspended(uid, suspended) {
+  await db.collection("users").doc(uid).update({ suspended: !!suspended });
 }
 
 // ---- 2. DSA structures — same behavior as the C++ classes ------------------
@@ -126,7 +179,11 @@ class PriorityQueue {
 }
 
 // ---- 3. Request "class" — mirrors Request::Request(...) in redistribution.cpp
-function makeRequest(recipientName, foodType, quantity, organizationType, organizationName, location, requestDate) {
+// `extra` (Phase 4) carries the requester-view fields the spec asks for that
+// don't exist in the original C++ model — beneficiaryCount, dietaryNotes,
+// requiredByTime, urgencyNote, ownerId — as an additive 8th argument so the
+// original 7-argument call shape (and every existing test) is unchanged.
+function makeRequest(recipientName, foodType, quantity, organizationType, organizationName, location, requestDate, extra = {}) {
   const orgTypeUpper = organizationType.toUpperCase();
   let priorityLevel;
   if (orgTypeUpper === "HOSPITAL") priorityLevel = 1;
@@ -141,7 +198,8 @@ function makeRequest(recipientName, foodType, quantity, organizationType, organi
     priorityLevel,
     isUrgent: priorityLevel === 1,
     isFulfilled: false,
-    skipReason: ""
+    skipReason: "",
+    ...extra
   };
 }
 const requestLessThan = (a, b) => a.priorityLevel > b.priorityLevel;
@@ -274,26 +332,101 @@ async function loadAllState() {
 }
 
 // ---- 7. Actions (mirror the API routes in server_main.cpp) -----------------
+//
+// Phase 4: donations and requests now carry `ownerId` (the creating user's
+// uid) and creation/edits are role- and ownership-scoped, enforced in
+// firestore.rules — these functions just shape the writes to match what the
+// rules will accept, they are not themselves the security boundary.
 
-async function addDonor({ id, name, contact, type, address }) {
-  await db.collection("donors").doc(String(id)).set({ id, name, contact, type, address });
+// A donor-role user's registry entry (donors/{uid}) — auto-created the first
+// time they touch the donor dashboard, rather than hand-typing a numeric
+// donor ID the way the legacy "Register donor" form used to. `donors.id`
+// keeps meaning "whatever donations.donorId points at", it's just the uid
+// now instead of an arbitrary number.
+async function ensureDonorProfile(user, defaults = {}) {
+  const ref = db.collection("donors").doc(user.uid);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set({
+      id: user.uid,
+      ownerId: user.uid,
+      name: defaults.name || user.email,
+      type: defaults.type || "Restaurant",
+      contact: defaults.contact || user.email,
+      address: defaults.address || karachiLocations[0]
+    });
+  }
+  return ref.id;
 }
 
-async function addDonation({ donationId, donorId, foodType, quantity, expiryDate }) {
-  const donor = donors.find(d => d.id === donorId);
-  if (!donor) throw new Error("Donor not found");
-  await db.collection("donations").doc(String(donationId)).set({
-    donationId, donorId, foodType, quantity, originalQuantity: quantity, expiryDate, status: "Pending"
+async function updateDonorProfile(fields) {
+  const uid = auth.currentUser.uid;
+  await ensureDonorProfile(auth.currentUser);
+  const { name, contact, type, address } = fields;
+  await db.collection("donors").doc(uid).update({ name, contact, type, address });
+}
+
+// Legacy/explicit-ID path — kept for anything that still calls it directly,
+// but no longer reachable from the UI (a donor's own uid is now always the
+// donorId; see ensureDonorProfile). Left ownership-safe: the caller must be
+// the donor whose id they're claiming for.
+async function addDonor({ id, name, contact, type, address }) {
+  await db.collection("donors").doc(String(id)).set({
+    id, name, contact, type, address, ownerId: auth.currentUser.uid
   });
 }
 
+// Donor dashboard "log donation" — always owned by the signed-in donor.
+// Firestore auto-generates the doc id (donationId mirrors it) instead of a
+// hand-typed number, so two donors logging at the same moment can never
+// collide the way two typed-in IDs could.
+async function addDonation(fields) {
+  const uid = auth.currentUser.uid;
+  await ensureDonorProfile(auth.currentUser);
+  const ref = db.collection("donations").doc();
+  const donationId = ref.id;
+  const quantity = Number(fields.quantity);
+  await ref.set({
+    donationId,
+    donorId: uid,
+    ownerId: uid,
+    foodType: fields.foodType,
+    quantity,
+    originalQuantity: quantity,
+    expiryDate: fields.expiryDate,
+    status: "Pending",
+    prepTime: fields.prepTime || "",
+    pickupTime: fields.pickupTime || "",
+    location: fields.location || "",
+    description: fields.description || "",
+    allergenInfo: fields.allergenInfo || ""
+  });
+  return donationId;
+}
+
+// Admin maintenance: purge every expired donation regardless of owner
+// (allowed by the isAdmin() bypass in firestore.rules).
 async function expireDonations(todayDate) {
   const expired = donations.filter(d => d.expiryDate <= todayDate);
   await Promise.all(expired.map(d => db.collection("donations").doc(d._id).delete()));
 }
 
-async function submitRequest({ recipientName, foodType, quantity, organizationType, organizationName, location, requestDate }) {
-  const r = makeRequest(recipientName, foodType, quantity, organizationType, organizationName, location, requestDate);
+// Donor self-service: purge only the signed-in donor's own expired stock
+// (allowed by the isOwner() branch, no admin bypass needed).
+async function expireMyDonations(todayDate) {
+  const uid = auth.currentUser.uid;
+  const expired = donations.filter(d => d.ownerId === uid && d.expiryDate <= todayDate);
+  await Promise.all(expired.map(d => db.collection("donations").doc(d._id).delete()));
+}
+
+// Requester dashboard "new request" — always owned by the signed-in
+// requester. `extra` carries the requester-view fields from the form
+// (beneficiaryCount, dietaryNotes, requiredByTime, urgencyNote).
+async function submitRequest({ recipientName, foodType, quantity, organizationType, organizationName, location, requestDate, ...extra }) {
+  const uid = auth.currentUser.uid;
+  const r = makeRequest(recipientName, foodType, quantity, organizationType, organizationName, location, requestDate, {
+    ...extra, ownerId: uid
+  });
   await db.collection("requests_urgent").add({ ...r, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
 }
 
@@ -301,6 +434,14 @@ async function submitRequest({ recipientName, foodType, quantity, organizationTy
 // against the current in-memory donation list (mutated in place as it goes,
 // same as before, so a later request in the same run sees earlier
 // allocations already subtracted) and returns a log of every outcome.
+//
+// Unchanged since Phase 3 — the allocation/partial-matching algorithm itself
+// is exactly what it was. What's new in Phase 4 is *who* is allowed to call
+// this: it mutates OTHER users' donations (decrementing quantity as it
+// allocates) and moves OTHER users' requests between collections, which
+// firestore.rules now only allows an admin to do (see the design note at
+// the top of firestore.rules). The UI restricts the "Run fulfillment"
+// control to the admin dashboard accordingly.
 async function runFulfillment() {
   const results = [];
   const batch = db.batch();
@@ -382,11 +523,16 @@ function stripMeta(r) {
 // Exposed for the page's UI code
 window.FRS = {
   karachiLocations, roadMap, roadEdges, shortestPath,
-  loadAllState, addDonor, addDonation, expireDonations, submitRequest, runFulfillment,
+  loadAllState, addDonor, addDonation, expireDonations, expireMyDonations,
+  submitRequest, runFulfillment,
+  ensureDonorProfile, updateDonorProfile,
   getState: () => ({ donors, donations, urgentPQ, pendingQueue, fulfilledStack }),
-  // Auth
+  // Auth / roles
   signUp, signIn, signOutUser, sendPasswordReset, onAuthChange,
   getCurrentUser: () => auth.currentUser,
+  getMyUid, claimRole, getMyProfile, watchMyProfile,
+  // Admin
+  listUsers, setUserRole, setUserSuspended,
   // Exposed for the test suite (test/*.test.js) — these are pure/isolated
   // enough to unit test directly without a Firestore connection.
   Stack, Queue, PriorityQueue, makeRequest, findMatchingDonations

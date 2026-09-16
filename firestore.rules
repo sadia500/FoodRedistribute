@@ -156,6 +156,74 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- Phase 5: account verification ------------------------------------
+    // One doc per user (verifications/{uid}). No doc yet means "unverified" —
+    // that state isn't persisted, it's just the absence of a submission. A
+    // donor/requester submits their own (create, status forced to 'pending')
+    // and may resubmit after a rejection (update, 'rejected' -> 'pending'),
+    // but can never write 'verified' themselves and can never touch the
+    // admin-owned review fields (reviewedBy/reviewedAt/reviewNote). Only an
+    // admin can move a submission to 'verified' or 'rejected', and — same
+    // self-action guard as the role/suspension rules above — never their own.
+    match /verifications/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+
+      allow create: if isSignedIn() && isActiveWriter()
+                    && request.auth.uid == uid
+                    && myRole() in ['donor', 'requester']
+                    && request.resource.data.ownerId == uid
+                    && request.resource.data.status == 'pending';
+
+      allow update: if isSignedIn() && (
+        (request.auth.uid == uid && isActiveWriter()
+          && resource.data.status == 'rejected'
+          && request.resource.data.status == 'pending'
+          && unchanged('ownerId')
+          && unchanged('reviewedBy') && unchanged('reviewedAt') && unchanged('reviewNote'))
+        ||
+        (isAdmin() && request.auth.uid != uid
+          && resource.data.status == 'pending'
+          && request.resource.data.status in ['verified', 'rejected']
+          && unchanged('ownerId'))
+      );
+
+      allow delete: if false;
+    }
+
+    // ---- Phase 5: audit log -------------------------------------------------
+    // Append-only — nobody, including admins, can update or delete an entry
+    // once it's written. Every entry must be filed by the person who did the
+    // thing (actorId has to equal the writer's own uid — nobody can log an
+    // action as if someone else did it), and the specific action named has
+    // to match an authority the writer actually holds (only an admin can
+    // file 'verification_approved', only a donor can file 'donation_created',
+    // and so on).
+    //
+    // Stated plainly: this is a client-stamped log, not a server-enforced
+    // one. There's no Cloud Functions layer in this project to be the sole,
+    // trusted writer (see IMPLEMENTATION_PLAN.md), so "tamper-proof" here
+    // means "nobody can rewrite or delete history, and nobody can claim an
+    // authority — like being an admin — that their own role doesn't back up"
+    // — not "a client can never write a log entry about its own real
+    // actions that didn't structurally have to happen." A fully tamper-proof
+    // trail would move log writes server-side; that's out of scope here.
+    function auditActorAuthorized(action) {
+      return (
+        (action in ['user_registered', 'role_assigned', 'verification_submitted'])
+        || (action in ['verification_approved', 'verification_rejected',
+                        'account_suspended', 'account_unsuspended', 'match_allocated'] && isAdmin())
+        || (action in ['donation_created', 'donation_cancelled'] && myRole() == 'donor')
+        || (action == 'request_created' && myRole() == 'requester')
+      );
+    }
+    match /audit_log/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn()
+                    && request.resource.data.actorId == request.auth.uid
+                    && auditActorAuthorized(request.resource.data.action);
+      allow update, delete: if false;
+    }
+
     // Default deny — anything not explicitly listed above is closed.
     match /{document=**} {
       allow read, write: if false;

@@ -4,6 +4,12 @@
   "private": true,
   "description": "Test suite for the Firebase Edition's matching/DSA logic (Stack, Queue, PriorityQueue, Dijkstra shortest path, donation matching).",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/matching.test.js",
+    "test:rules": "firebase emulators:exec --only firestore --project food-redistribute-rules-test \"node --test test/rules.test.js\"",
+    "test:all": "npm run test && npm run test:rules"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase-tools": "^15.30.1"
   }
 }

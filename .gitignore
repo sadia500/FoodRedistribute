@@ -41,3 +41,9 @@ DocumentLayout.json
 
 # Build output
 *.exe
+
+# Node (test tooling: @firebase/rules-unit-testing, firebase-tools)
+node_modules/
+firebase-debug.log
+firestore-debug.log
+.firebase/

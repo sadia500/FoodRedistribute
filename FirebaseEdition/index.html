@@ -112,7 +112,31 @@
   #appShell.visible{ display:flex; }
   .userbar{ padding:0 26px 14px; font-size:12.5px; color:var(--ink-soft); }
   .userbar .email{ display:block; font-weight:700; color:var(--ink); margin-bottom:8px; word-break:break-all; }
+  .userbar .role-badge{ display:inline-block; margin-bottom:8px; font-size:10.5px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; background:var(--paper-soft); border:1px solid var(--border); color:var(--ink-soft); padding:3px 9px; border-radius:20px; }
   .userbar button{ width:100%; padding:8px 0; font-size:12.5px; }
+
+  /* Role gate + suspended gate — same treatment as the auth gate */
+  #roleGate, #suspendedGate{ display:none; align-items:center; justify-content:center; min-height:100vh; width:100%; }
+  .role-card{ width:100%; max-width:440px; background:var(--paper); border:1px solid var(--border); border-radius:18px; padding:36px 32px; box-shadow:var(--shadow-md); text-align:center; }
+  .role-card h1{ font-size:24px; margin-bottom:8px; }
+  .role-options{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:26px; }
+  .role-option{ background:var(--paper-soft); color:var(--ink); border:1.5px solid var(--border); border-radius:14px; padding:20px 16px; cursor:pointer; transition:border-color .15s, transform .1s; text-align:left; box-shadow:none; }
+  .role-option:hover{ background:var(--paper-soft); border-color:var(--terracotta); transform:translateY(-2px); box-shadow:none; }
+  .role-option .role-ico{ margin-bottom:10px; color:var(--terracotta-deep); }
+  .role-option strong{ display:block; font-size:15px; margin-bottom:4px; }
+  .role-option span{ font-size:12.5px; color:var(--ink-soft); line-height:1.5; }
+  .role-option:disabled{ opacity:.5; cursor:not-allowed; }
+
+  /* Status/role tags reused across donor/requester/admin views */
+  .tag.pending{ background:#FBECC8; color:var(--sun-deep); } .tag.fulfilled{ background:#DEEEE1; color:var(--leaf-deep); }
+  .tag.partial{ background:#DCE9F2; color:var(--sky); } .tag.admin{ background:#F1DCEA; color:#8A3F73; }
+  .tag.donor{ background:#DEEEE1; color:var(--leaf-deep); } .tag.requester{ background:#DCE9F2; color:var(--sky); }
+  .tag.member{ background:#EFE9DE; color:var(--ink-soft); } .tag.suspended{ background:#FBE0DA; color:var(--terracotta-deep); }
+  .role-select{ padding:6px 8px; font-size:12.5px; border-radius:8px; }
+  .row-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row-actions button{ padding:6px 12px; font-size:12px; }
+  .hint{ font-size:12px; color:var(--muted); margin-top:6px; }
+  .field-error{ font-size:11.5px; color:var(--terracotta-deep); margin-top:2px; min-height:14px; }
 </style>
 </head>
 <body>
@@ -137,6 +161,34 @@
   </div>
 </div>
 
+<div id="roleGate">
+  <div class="role-card">
+    <h1>One quick thing —</h1>
+    <p class="page-sub" style="margin:0 auto;">How will you be using Dispatch? This can't be changed later, so pick the one that fits.</p>
+    <div class="role-options">
+      <button type="button" class="role-option" id="claimDonorBtn">
+        <span class="role-ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/></svg></span>
+        <strong>Food Donor</strong>
+        <span>A restaurant, kitchen, or individual with food to give.</span>
+      </button>
+      <button type="button" class="role-option" id="claimRequesterBtn">
+        <span class="role-ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 11h8M8 15h5"/></svg></span>
+        <strong>Recipient Organization</strong>
+        <span>A hospital, old-age home, or charity requesting food.</span>
+      </button>
+    </div>
+    <div class="msg" id="roleMsg"></div>
+  </div>
+</div>
+
+<div id="suspendedGate">
+  <div class="role-card">
+    <h1>Account suspended</h1>
+    <p class="page-sub" style="margin:0 auto;">An administrator has suspended this account. You can still sign in to see your history, but you can't add or change anything right now. Contact your administrator if you think this is a mistake.</p>
+    <button type="button" class="secondary" id="suspendedSignOutBtn" style="margin-top:10px;">Sign out</button>
+  </div>
+</div>
+
 <div id="appShell">
 <div class="sidebar">
   <div class="brand">
@@ -145,13 +197,20 @@
   </div>
   <nav>
     <div class="nav-item active" data-page="overview"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg></span>Overview</div>
+    <div class="nav-item" data-page="donor" data-role="donor"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/></svg></span>My Donations</div>
+    <div class="nav-item" data-page="requester" data-role="requester"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 11h8M8 15h5"/></svg></span>My Requests</div>
+    <div class="nav-item" data-page="admin" data-role="admin"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></span>Admin</div>
     <div class="nav-item" data-page="donors"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8.3" r="2.2"/><path d="M15.3 13.2c2.3.5 3.7 2.4 4.2 5"/></svg></span>Donors</div>
     <div class="nav-item" data-page="donations"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h18l-2 11H5L3 8Z"/><path d="M3 8 6 4h12l3 4"/><path d="M9 12v4M15 12v4"/></svg></span>Donations</div>
     <div class="nav-item" data-page="requests"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M8 11h8M8 15h5"/></svg></span>Requests</div>
     <div class="nav-item" data-page="route"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.3"/></svg></span>Route Finder</div>
   </nav>
   <div class="sidebar-bottom">
-    <div class="userbar"><span class="email" id="userEmail"></span><button class="secondary" id="signOutBtn">Sign out</button></div>
+    <div class="userbar">
+      <span class="role-badge" id="userRoleBadge"></span>
+      <span class="email" id="userEmail"></span>
+      <button class="secondary" id="signOutBtn">Sign out</button>
+    </div>
     <div class="conn"><div class="dot" id="connDot"></div><span id="connLabel">Connecting…</span></div>
   </div>
 </div>
@@ -173,72 +232,118 @@
 
   <div class="page" id="page-donors">
     <h1>Donors</h1>
-    <p class="page-sub">Individuals and organizations currently registered to give food.</p>
-    <div class="two-col">
-      <div><table><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Contact</th><th>Location</th></tr></thead><tbody id="donorTable"></tbody></table></div>
-      <div class="panel">
-        <div class="block-title" style="margin-bottom:16px;">Register donor</div>
-        <form id="donorForm" class="form-grid">
-          <div class="field"><label>Donor ID</label><input type="number" name="id" required></div>
-          <div class="field"><label>Type</label><select name="type"><option>Individual</option><option>Organization</option></select></div>
-          <div class="field full"><label>Name</label><input type="text" name="name" required></div>
-          <div class="field full"><label>Contact</label><input type="text" name="contact" placeholder="Phone or email" required></div>
-          <div class="field full"><label>Location</label><select name="address" id="donorLocationSelect"></select></div>
-          <div class="actions field full"><button type="submit">Add donor</button></div>
-        </form>
-        <div class="msg" id="donorMsg"></div>
-      </div>
-    </div>
+    <p class="page-sub">Individuals and organizations currently registered to give food. Donors manage their own registration from <strong>My Donations</strong> — this is a shared, read-only view.</p>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Contact</th><th>Location</th></tr></thead><tbody id="donorTable"></tbody></table>
   </div>
 
   <div class="page" id="page-donations">
     <h1>Donations</h1>
-    <p class="page-sub">Food currently in the system, matched against requests by type, quantity, and expiry.</p>
-    <div class="two-col">
-      <div>
-        <table><thead><tr><th>ID</th><th>Donor</th><th>Food</th><th>Qty</th><th>Expiry</th><th>Status</th></tr></thead><tbody id="donationTable"></tbody></table>
-        <div class="actions" style="margin-top:18px;"><input type="date" id="expireDate" style="max-width:170px;"><button class="secondary" id="expireBtn">Remove expired as of this date</button></div>
-      </div>
-      <div class="panel">
-        <div class="block-title" style="margin-bottom:16px;">Log donation</div>
-        <form id="donationForm" class="form-grid">
-          <div class="field"><label>Donation ID</label><input type="number" name="donationId" required></div>
-          <div class="field"><label>Donor ID</label><input type="number" name="donorId" required></div>
-          <div class="field full"><label>Food type</label><input type="text" name="foodType" placeholder="e.g. Rice" required></div>
-          <div class="field"><label>Quantity</label><input type="number" name="quantity" required></div>
-          <div class="field"><label>Expiry date</label><input type="date" name="expiryDate" required></div>
-          <div class="actions field full"><button type="submit">Add donation</button></div>
-        </form>
-        <div class="msg" id="donationMsg"></div>
-      </div>
-    </div>
+    <p class="page-sub">Food currently in the system, matched against requests by type, quantity, and expiry. Donors log and manage their own donations from <strong>My Donations</strong> — this is a shared, read-only view.</p>
+    <table><thead><tr><th>ID</th><th>Donor</th><th>Food</th><th>Qty</th><th>Expiry</th><th>Status</th></tr></thead><tbody id="donationTable"></tbody></table>
   </div>
 
   <div class="page" id="page-requests">
     <h1>Requests</h1>
-    <p class="page-sub">Requests are auto-ranked by organization type — hospitals before old-age homes before charities.</p>
-    <div class="actions" style="margin-bottom:28px;"><button id="fulfillBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" style="vertical-align:-3px;margin-right:7px;"><path d="M12.7 1.3a.75.75 0 0 1 .45.86l-1.36 6.09h5.36a.75.75 0 0 1 .56 1.25l-8.9 10.1a.75.75 0 0 1-1.3-.63l1.36-6.42H3.25a.75.75 0 0 1-.56-1.25l8.9-9.77a.75.75 0 0 1 .8-.23Z"/></svg>Run fulfillment on urgent queue</button></div>
-    <div id="fulfillResults"></div>
-    <div class="two-col" style="margin-top:8px;">
+    <p class="page-sub">Requests are auto-ranked by organization type — hospitals before old-age homes before charities. Requesters submit and manage their own requests from <strong>My Requests</strong> — this is a shared, read-only view.</p>
+    <div class="two-col">
       <div>
         <section class="block"><div class="block-title">Urgent queue</div><div id="urgentList"><div class="empty loading">Loading…</div></div></section>
         <section class="block"><div class="block-title">Pending (awaiting stock)</div><div id="pendingList"><div class="empty loading">Loading…</div></div></section>
       </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-donor">
+    <h1>My Donations</h1>
+    <p class="page-sub">Log food your organization has available and track what's been claimed by the matching engine.</p>
+    <div class="stat-row" id="donorStatRow">
+      <div class="stat"><div class="stat-num sky" id="dStatTotal">–</div><div class="stat-label">Total logged</div></div>
+      <div class="stat"><div class="stat-num pending" id="dStatActive">–</div><div class="stat-label">Active / available</div></div>
+      <div class="stat"><div class="stat-num ok" id="dStatCompleted">–</div><div class="stat-label">Fully claimed</div></div>
+      <div class="stat"><div class="stat-num urgent" id="dStatExpiring">–</div><div class="stat-label">Expiring within 3 days</div></div>
+    </div>
+    <hr class="rule">
+    <div class="two-col">
+      <div>
+        <div class="block-title">Your donations</div>
+        <div id="myDonationsList"><div class="empty loading">Loading…</div></div>
+        <div class="actions" style="margin-top:18px;">
+          <input type="date" id="myExpireDate" style="max-width:170px;">
+          <button class="secondary" id="myExpireBtn">Remove my expired stock as of this date</button>
+        </div>
+      </div>
       <div class="panel">
-        <div class="block-title" style="margin-bottom:16px;">New request</div>
-        <form id="requestForm" class="form-grid">
-          <div class="field full"><label>Recipient name</label><input type="text" name="recipientName" required></div>
-          <div class="field"><label>Food type</label><input type="text" name="foodType" required></div>
-          <div class="field"><label>Quantity</label><input type="number" name="quantity" required></div>
-          <div class="field"><label>Organization type</label><select name="organizationType"><option>Hospital</option><option>OldAge Home</option><option>Charity</option></select></div>
-          <div class="field"><label>Organization name</label><input type="text" name="organizationName" required></div>
-          <div class="field"><label>Location</label><select name="location" id="reqLocationSelect"></select></div>
-          <div class="field"><label>Request date</label><input type="date" name="requestDate" required></div>
-          <div class="actions field full"><button type="submit">Submit request</button></div>
+        <div class="block-title" style="margin-bottom:16px;">Log a donation</div>
+        <form id="myDonationForm" class="form-grid">
+          <div class="field full"><label>Food type / category</label><input type="text" name="foodType" placeholder="e.g. Rice, cooked meals, produce" required></div>
+          <div class="field"><label>Quantity</label><input type="number" name="quantity" min="1" step="1" required></div>
+          <div class="field"><label>Expiry / best-before</label><input type="date" name="expiryDate" required></div>
+          <div class="field"><label>Prepared at</label><input type="datetime-local" name="prepTime"></div>
+          <div class="field"><label>Pickup by</label><input type="datetime-local" name="pickupTime"></div>
+          <div class="field full"><label>Pickup location</label><select name="location" id="myDonorLocationSelect"></select></div>
+          <div class="field full"><label>Description</label><input type="text" name="description" placeholder="Any details a recipient should know"></div>
+          <div class="field full"><label>Allergen / dietary info</label><input type="text" name="allergenInfo" placeholder="e.g. contains nuts, halal, vegetarian"></div>
+          <div class="field-error field full" id="myDonationErr"></div>
+          <div class="actions field full"><button type="submit">Log donation</button></div>
         </form>
-        <div class="msg" id="requestMsg"></div>
+        <div class="msg" id="myDonationMsg"></div>
       </div>
     </div>
+  </div>
+
+  <div class="page" id="page-requester">
+    <h1>My Requests</h1>
+    <p class="page-sub">Submit food requests for your organization and track their status through the matching engine.</p>
+    <div class="stat-row" id="reqStatRow">
+      <div class="stat"><div class="stat-num sky" id="rStatTotal">–</div><div class="stat-label">Total submitted</div></div>
+      <div class="stat"><div class="stat-num urgent" id="rStatUrgent">–</div><div class="stat-label">Waiting (urgent queue)</div></div>
+      <div class="stat"><div class="stat-num pending" id="rStatPending">–</div><div class="stat-label">Pending (unmatched)</div></div>
+      <div class="stat"><div class="stat-num ok" id="rStatFulfilled">–</div><div class="stat-label">Fulfilled</div></div>
+    </div>
+    <hr class="rule">
+    <div class="two-col">
+      <div>
+        <div class="block-title">Your requests</div>
+        <div id="myRequestsList"><div class="empty loading">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="block-title" style="margin-bottom:16px;">New request</div>
+        <form id="myRequestForm" class="form-grid">
+          <div class="field full"><label>Recipient name</label><input type="text" name="recipientName" required></div>
+          <div class="field"><label>Food type / category</label><input type="text" name="foodType" required></div>
+          <div class="field"><label>Quantity</label><input type="number" name="quantity" min="1" step="1" required></div>
+          <div class="field"><label>Organization type</label><select name="organizationType"><option>Hospital</option><option>OldAge Home</option><option>Charity</option></select></div>
+          <div class="field full"><label>Organization name</label><input type="text" name="organizationName" required></div>
+          <div class="field"><label>Beneficiary count</label><input type="number" name="beneficiaryCount" min="1" step="1" placeholder="People to feed"></div>
+          <div class="field"><label>Urgency</label><select name="urgencyNote"><option>Immediate</option><option>Within 24 hours</option><option>Flexible</option></select></div>
+          <div class="field"><label>Location</label><select name="location" id="reqLocationSelect"></select></div>
+          <div class="field"><label>Needed by</label><input type="datetime-local" name="requiredByTime"></div>
+          <div class="field full"><label>Request date</label><input type="date" name="requestDate" required></div>
+          <div class="field full"><label>Dietary requirements</label><input type="text" name="dietaryNotes" placeholder="e.g. halal, no nuts, vegetarian"></div>
+          <div class="field-error field full" id="myRequestErr"></div>
+          <div class="actions field full"><button type="submit">Submit request</button></div>
+        </form>
+        <div class="msg" id="myRequestMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-admin">
+    <h1>Admin</h1>
+    <p class="page-sub">Role management, account status, and the matching engine — restricted to admins, and enforced by Firestore rules, not just hidden here.</p>
+    <section class="block">
+      <div class="block-title">Matching engine</div>
+      <div class="actions" style="margin-bottom:14px;">
+        <button id="fulfillBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" style="vertical-align:-3px;margin-right:7px;"><path d="M12.7 1.3a.75.75 0 0 1 .45.86l-1.36 6.09h5.36a.75.75 0 0 1 .56 1.25l-8.9 10.1a.75.75 0 0 1-1.3-.63l1.36-6.42H3.25a.75.75 0 0 1-.56-1.25l8.9-9.77a.75.75 0 0 1 .8-.23Z"/></svg>Run fulfillment on urgent queue</button>
+        <input type="date" id="expireDate" style="max-width:170px;"><button class="secondary" id="expireBtn">Remove all expired stock as of this date</button>
+      </div>
+      <div id="fulfillResults"></div>
+    </section>
+    <hr class="rule">
+    <section class="block">
+      <div class="block-title">Users</div>
+      <div id="adminUsersList"><div class="empty loading">Loading…</div></div>
+    </section>
   </div>
 
   <div class="page" id="page-route">
@@ -281,7 +386,7 @@ function orgTagClass(type){
 
 function populateLocationSelects(){
   const opts = window.FRS.karachiLocations.map(l => `<option>${l}</option>`).join("");
-  document.getElementById("donorLocationSelect").innerHTML = opts;
+  document.getElementById("myDonorLocationSelect").innerHTML = opts;
   document.getElementById("reqLocationSelect").innerHTML = opts;
 }
 
@@ -347,6 +452,139 @@ async function refreshAll(){
     <div class="log-item"><div class="log-main"><div><strong>${r.recipientName}</strong> — ${r.quantity} ${r.foodType} (${r.organizationName})</div>
     <div class="log-route">${r.skipReason || "Awaiting donation"}</div></div>
     <span class="tag ${orgTagClass(r.organizationType)}">${r.organizationType}</span></div>`).join("") : '<div class="empty">No pending requests.</div>';
+
+  if (myRole === "donor") renderDonorDashboard();
+  if (myRole === "requester") renderRequesterDashboard();
+  if (myRole === "admin") renderAdminUsers();
+}
+
+function donationStatusTag(status){
+  if (status === "Completed") return '<span class="tag fulfilled">CLAIMED</span>';
+  if (status === "Partially Fulfilled") return '<span class="tag partial">PARTIAL</span>';
+  return '<span class="tag pending">AVAILABLE</span>';
+}
+
+function daysUntil(dateStr){
+  if (!dateStr) return Infinity;
+  const ms = new Date(dateStr + "T00:00:00").getTime() - new Date(new Date().toISOString().slice(0,10) + "T00:00:00").getTime();
+  return Math.round(ms / 86400000);
+}
+
+// ---- Donor dashboard --------------------------------------------------
+function renderDonorDashboard(){
+  const uid = window.FRS.getMyUid();
+  const { donations } = window.FRS.getState();
+  const mine = donations.filter(d => d.ownerId === uid);
+
+  const active = mine.filter(d => d.status !== "Completed");
+  const completed = mine.filter(d => d.status === "Completed");
+  const expiring = mine.filter(d => d.status !== "Completed" && daysUntil(d.expiryDate) <= 3 && daysUntil(d.expiryDate) >= 0);
+
+  animateNumber(document.getElementById("dStatTotal"), mine.length);
+  animateNumber(document.getElementById("dStatActive"), active.length);
+  animateNumber(document.getElementById("dStatCompleted"), completed.length);
+  animateNumber(document.getElementById("dStatExpiring"), expiring.length);
+
+  const listEl = document.getElementById("myDonationsList");
+  if (!mine.length) {
+    listEl.innerHTML = '<div class="empty">You haven\'t logged any donations yet — use the form to add your first one.</div>';
+    return;
+  }
+  listEl.innerHTML = mine.slice().sort((a,b) => (a.expiryDate||"").localeCompare(b.expiryDate||"")).map(d => `
+    <div class="log-item"><div class="log-main">
+      <div><strong>${d.quantity}/${d.originalQuantity}</strong> ${d.foodType}${d.allergenInfo ? ` <span style="color:var(--muted);font-weight:600;">(${d.allergenInfo})</span>` : ""}</div>
+      <div class="log-route">Expires ${d.expiryDate}${d.pickupTime ? ` · pickup by ${d.pickupTime.replace("T"," ")}` : ""}${d.location ? ` · ${d.location}` : ""}</div>
+    </div>${donationStatusTag(d.status)}</div>
+  `).join("");
+}
+
+// ---- Requester dashboard -----------------------------------------------
+function requestStatusTag(status){
+  if (status === "fulfilled") return '<span class="tag fulfilled">FULFILLED</span>';
+  if (status === "pending") return '<span class="tag pending">PENDING</span>';
+  return '<span class="tag hospital">WAITING</span>';
+}
+
+function renderRequesterDashboard(){
+  const uid = window.FRS.getMyUid();
+  const { urgentPQ, pendingQueue, fulfilledStack } = window.FRS.getState();
+  const urgentMine = urgentPQ.getHeap().filter(r => r.ownerId === uid).map(r => ({ ...r, _status: "urgent" }));
+  const pendingMine = pendingQueue.data.filter(r => r.ownerId === uid).map(r => ({ ...r, _status: "pending" }));
+  const fulfilledMine = fulfilledStack.data.filter(r => r.ownerId === uid).map(r => ({ ...r, _status: "fulfilled" }));
+  const all = [...urgentMine, ...pendingMine, ...fulfilledMine];
+
+  animateNumber(document.getElementById("rStatTotal"), all.length);
+  animateNumber(document.getElementById("rStatUrgent"), urgentMine.length);
+  animateNumber(document.getElementById("rStatPending"), pendingMine.length);
+  animateNumber(document.getElementById("rStatFulfilled"), fulfilledMine.length);
+
+  const listEl = document.getElementById("myRequestsList");
+  if (!all.length) {
+    listEl.innerHTML = '<div class="empty">You haven\'t submitted any requests yet — use the form to submit your first one.</div>';
+    return;
+  }
+  listEl.innerHTML = all.map(r => `
+    <div class="log-item"><div class="log-main">
+      <div><strong>${r.quantity} ${r.foodType}</strong> for ${r.recipientName} (${r.organizationName})</div>
+      <div class="log-route">${r._status === "pending" ? (r.skipReason || "Awaiting donation") : r._status === "fulfilled" ? "Delivered" : "In the urgent queue"}${r.beneficiaryCount ? ` · ${r.beneficiaryCount} people` : ""}</div>
+    </div>${requestStatusTag(r._status)}</div>
+  `).join("");
+}
+
+// ---- Admin dashboard -----------------------------------------------------
+function roleTagClass(role){
+  if (role === "admin") return "admin";
+  if (role === "donor") return "donor";
+  if (role === "requester") return "requester";
+  return "member";
+}
+
+async function renderAdminUsers(){
+  const listEl = document.getElementById("adminUsersList");
+  const myUid = window.FRS.getMyUid();
+  let users;
+  try {
+    users = await window.FRS.listUsers();
+  } catch (e) {
+    listEl.innerHTML = '<div class="empty">Couldn\'t load the user list.</div>';
+    return;
+  }
+  if (!users.length) { listEl.innerHTML = '<div class="empty">No users yet.</div>'; return; }
+  listEl.innerHTML = `<table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Manage</th></tr></thead><tbody>` +
+    users.map(u => `
+      <tr data-uid="${u._id}">
+        <td>${u.email || u._id}</td>
+        <td><span class="tag ${roleTagClass(u.role)}">${(u.role || "member").toUpperCase()}</span></td>
+        <td>${u.suspended ? '<span class="tag suspended">SUSPENDED</span>' : '<span class="tag fulfilled">ACTIVE</span>'}</td>
+        <td class="row-actions">
+          ${u._id === myUid ? '<span class="hint">This is you</span>' : `
+            <select class="role-select" data-action="role" data-uid="${u._id}">
+              ${["member","donor","requester","admin"].map(r => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}
+            </select>
+            <button type="button" class="secondary" data-action="suspend" data-uid="${u._id}" data-suspended="${!!u.suspended}">
+              ${u.suspended ? "Unsuspend" : "Suspend"}
+            </button>`}
+        </td>
+      </tr>
+    `).join("") + `</tbody></table>`;
+
+  listEl.querySelectorAll('[data-action="role"]').forEach(sel => {
+    sel.addEventListener("change", async () => {
+      sel.disabled = true;
+      try { await window.FRS.setUserRole(sel.dataset.uid, sel.value); }
+      catch (e) { alert(e.message || "Couldn't change that user's role."); }
+      finally { sel.disabled = false; renderAdminUsers(); }
+    });
+  });
+  listEl.querySelectorAll('[data-action="suspend"]').forEach(btn => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const nextSuspended = btn.dataset.suspended !== "true";
+      try { await window.FRS.setUserSuspended(btn.dataset.uid, nextSuspended); }
+      catch (e) { alert(e.message || "Couldn't change that user's status."); }
+      finally { renderAdminUsers(); }
+    });
+  });
 }
 
 // Guards every form submit so a double-click, a double-tap, or an impatient
@@ -377,44 +615,72 @@ function bindFormSubmit(formId, msgId, handler, successMsg){
   });
 }
 
-bindFormSubmit("donorForm", "donorMsg", async form => {
-  const body = Object.fromEntries(new FormData(form).entries());
-  body.id = parseInt(body.id);
-  await window.FRS.addDonor(body);
-}, "Donor added.");
+// Today's date, used to validate that an expiry/best-before date isn't
+// already in the past — same "yyyy-mm-dd" shape the <input type=date> gives.
+function todayStr(){ return new Date().toISOString().slice(0, 10); }
 
-bindFormSubmit("donationForm", "donationMsg", async form => {
+bindFormSubmit("myDonationForm", "myDonationMsg", async form => {
   const body = Object.fromEntries(new FormData(form).entries());
-  body.donationId = parseInt(body.donationId); body.donorId = parseInt(body.donorId); body.quantity = parseInt(body.quantity);
+  const errEl = document.getElementById("myDonationErr");
+  errEl.textContent = "";
+  body.quantity = parseInt(body.quantity, 10);
+  if (!body.foodType || !body.foodType.trim()) { errEl.textContent = "Food type / category is required."; throw new Error("Food type / category is required."); }
+  if (!Number.isFinite(body.quantity) || body.quantity <= 0) { errEl.textContent = "Quantity must be greater than 0."; throw new Error("Quantity must be greater than 0."); }
+  if (!body.expiryDate) { errEl.textContent = "Expiry / best-before date is required."; throw new Error("Expiry / best-before date is required."); }
+  if (body.expiryDate < todayStr()) { errEl.textContent = "Expiry date can't be in the past."; throw new Error("Expiry date can't be in the past."); }
   await window.FRS.addDonation(body);
-}, "Donation added.");
+}, "Donation logged.");
+
+document.getElementById("myExpireBtn").addEventListener("click", async () => {
+  const date = document.getElementById("myExpireDate").value;
+  if(!date) return;
+  await window.FRS.expireMyDonations(date); await window.FRS.loadAllState(); await refreshAll();
+});
+
+bindFormSubmit("myRequestForm", "myRequestMsg", async form => {
+  const body = Object.fromEntries(new FormData(form).entries());
+  const errEl = document.getElementById("myRequestErr");
+  errEl.textContent = "";
+  body.quantity = parseInt(body.quantity, 10);
+  if (body.beneficiaryCount) body.beneficiaryCount = parseInt(body.beneficiaryCount, 10);
+  if (!body.recipientName || !body.recipientName.trim()) { errEl.textContent = "Recipient name is required."; throw new Error("Recipient name is required."); }
+  if (!body.foodType || !body.foodType.trim()) { errEl.textContent = "Food type / category is required."; throw new Error("Food type / category is required."); }
+  if (!Number.isFinite(body.quantity) || body.quantity <= 0) { errEl.textContent = "Quantity must be greater than 0."; throw new Error("Quantity must be greater than 0."); }
+  if (body.beneficiaryCount != null && (!Number.isFinite(body.beneficiaryCount) || body.beneficiaryCount <= 0)) { errEl.textContent = "Beneficiary count must be greater than 0."; throw new Error("Beneficiary count must be greater than 0."); }
+  if (!body.requestDate) { errEl.textContent = "Request date is required."; throw new Error("Request date is required."); }
+  await window.FRS.submitRequest(body);
+}, "Request submitted.");
 
 document.getElementById("expireBtn").addEventListener("click", async () => {
+  if (myRole !== "admin") return;
   const date = document.getElementById("expireDate").value;
   if(!date) return;
   await window.FRS.expireDonations(date); await window.FRS.loadAllState(); await refreshAll();
 });
 
-bindFormSubmit("requestForm", "requestMsg", async form => {
-  const body = Object.fromEntries(new FormData(form).entries());
-  body.quantity = parseInt(body.quantity);
-  await window.FRS.submitRequest(body);
-}, "Request submitted.");
-
 document.getElementById("fulfillBtn").addEventListener("click", async () => {
+  if (myRole !== "admin") return; // belt-and-suspenders — the real gate is firestore.rules
+  const btn = document.getElementById("fulfillBtn");
   const el = document.getElementById("fulfillResults");
-  el.innerHTML = '<div class="empty">Running matching engine…</div>';
-  const results = await window.FRS.runFulfillment();
-  if(results.length === 0){ el.innerHTML = '<div class="empty">No urgent requests to process.</div>'; }
-  else {
-    el.innerHTML = results.map(res => res.status === "fulfilled" ? `
-      <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}${res.splitAcross > 1 ? ` <span style="color:var(--muted);font-weight:600;">(split across ${res.splitAcross} donations)</span>` : ""}</div>
-      <div class="log-route">${res.route}</div></div><span class="tag charity">FULFILLED</span></div>` : `
-      <div class="log-item"><div class="log-main"><div><strong>Moved to pending</strong> — ${res.request.quantity} ${res.request.foodType} for ${res.request.recipientName}</div>
-      <div class="log-route">${res.reason}</div></div><span class="tag hospital">PENDING</span></div>`
-    ).join("");
+  btn.disabled = true;
+  el.innerHTML = '<div class="empty loading">Running matching engine…</div>';
+  try {
+    const results = await window.FRS.runFulfillment();
+    if(results.length === 0){ el.innerHTML = '<div class="empty">No urgent requests to process.</div>'; }
+    else {
+      el.innerHTML = results.map(res => res.status === "fulfilled" ? `
+        <div class="log-item"><div class="log-main"><div><strong>Delivered</strong> — ${res.request.quantity} ${res.request.foodType} to ${res.request.recipientName}${res.splitAcross > 1 ? ` <span style="color:var(--muted);font-weight:600;">(split across ${res.splitAcross} donations)</span>` : ""}</div>
+        <div class="log-route">${res.route}</div></div><span class="tag charity">FULFILLED</span></div>` : `
+        <div class="log-item"><div class="log-main"><div><strong>Moved to pending</strong> — ${res.request.quantity} ${res.request.foodType} for ${res.request.recipientName}</div>
+        <div class="log-route">${res.reason}</div></div><span class="tag hospital">PENDING</span></div>`
+      ).join("");
+    }
+    await refreshAll();
+  } catch(err) {
+    el.innerHTML = `<div class="empty">Matching run failed: ${err.message || "something went wrong"}.</div>`;
+  } finally {
+    btn.disabled = false;
   }
-  await refreshAll();
 });
 
 function drawGraph(highlightPath = []){
@@ -506,14 +772,69 @@ async function loadDashboard(){
 // confirmed by Firebase Auth — Firestore itself also refuses reads/writes
 // from a signed-out client (see firestore.rules), this just keeps the UI
 // consistent with that and avoids a flash of empty/broken tables first.
+//
+// Phase 4 adds two more gates in front of the dashboard, both driven by a
+// real-time subscription on the user's own profile (window.FRS.watchMyProfile)
+// so a role claim or an admin-issued suspension takes effect immediately,
+// without a manual reload:
+//   1. roleGate  — role is still 'member' (unclaimed) -> pick donor/requester.
+//   2. suspendedGate — an admin has suspended this account -> read-only notice.
+// Both are UI convenience only; the actual enforcement is firestore.rules.
 
 let dashboardLoaded = false;
+let myRole = null;
+let profileUnsub = null;
 const authGate = document.getElementById("authGate");
+const roleGate = document.getElementById("roleGate");
+const suspendedGate = document.getElementById("suspendedGate");
 const appShell = document.getElementById("appShell");
 const authForm = document.getElementById("authForm");
 const authMsg = document.getElementById("authMsg");
 const authSubmitBtn = document.getElementById("authSubmitBtn");
 let authMode = "signin";
+
+function applyRoleNavVisibility(role){
+  document.querySelectorAll(".nav-item[data-role]").forEach(item => {
+    item.style.display = (item.dataset.role === role) ? "flex" : "none";
+  });
+  const activeItem = document.querySelector(".nav-item.active");
+  if (activeItem && activeItem.style.display === "none") {
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    document.querySelector('.nav-item[data-page="overview"]').classList.add("active");
+    document.getElementById("page-overview").classList.add("active");
+  }
+}
+
+function showGate(which){
+  authGate.style.display = which === "auth" ? "flex" : "none";
+  roleGate.style.display = which === "role" ? "flex" : "none";
+  suspendedGate.style.display = which === "suspended" ? "flex" : "none";
+  appShell.classList.toggle("visible", which === "app");
+}
+
+document.getElementById("claimDonorBtn").addEventListener("click", () => claimRole("donor"));
+document.getElementById("claimRequesterBtn").addEventListener("click", () => claimRole("requester"));
+async function claimRole(role){
+  const msg = document.getElementById("roleMsg");
+  document.getElementById("claimDonorBtn").disabled = true;
+  document.getElementById("claimRequesterBtn").disabled = true;
+  msg.textContent = ""; msg.className = "msg";
+  try {
+    await window.FRS.claimRole(role);
+    // The onSnapshot profile subscription below picks up the new role and
+    // moves us out of this gate automatically.
+  } catch (err) {
+    msg.textContent = err.message || "Couldn't save that — please try again.";
+    msg.className = "msg err";
+    document.getElementById("claimDonorBtn").disabled = false;
+    document.getElementById("claimRequesterBtn").disabled = false;
+  }
+}
+
+document.getElementById("suspendedSignOutBtn").addEventListener("click", async () => {
+  await window.FRS.signOutUser();
+});
 
 document.querySelectorAll(".auth-tab").forEach(tab => {
   tab.addEventListener("click", () => {
@@ -580,15 +901,35 @@ function friendlyAuthError(err){
 }
 
 window.FRS.onAuthChange(async user => {
+  if (profileUnsub) { profileUnsub(); profileUnsub = null; }
+
   if (user) {
-    authGate.style.display = "none";
-    appShell.classList.add("visible");
     document.getElementById("userEmail").textContent = user.email;
-    if (!dashboardLoaded) { dashboardLoaded = true; await loadDashboard(); }
+    profileUnsub = window.FRS.watchMyProfile(async profile => {
+      if (!profile) return; // ensureUserProfile hasn't finished writing yet
+      const role = profile.role || "member";
+      myRole = role === "member" ? null : role;
+
+      if (profile.suspended) {
+        showGate("suspended");
+        return;
+      }
+      if (role === "member") {
+        showGate("role");
+        return;
+      }
+
+      const badge = document.getElementById("userRoleBadge");
+      badge.textContent = role;
+      showGate("app");
+      applyRoleNavVisibility(role);
+      if (!dashboardLoaded) { dashboardLoaded = true; await loadDashboard(); }
+      else { await refreshAll(); }
+    });
   } else {
     dashboardLoaded = false;
-    appShell.classList.remove("visible");
-    authGate.style.display = "flex";
+    myRole = null;
+    showGate("auth");
     authForm.reset();
   }
 });

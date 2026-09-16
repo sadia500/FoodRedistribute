@@ -1,14 +1,25 @@
 rules_version = '2';
 
-// Authenticated-users-only access. Every read and write requires a signed-in
-// Firebase Auth user; anonymous/public access from the earlier "test mode"
-// config is closed off.
+// Phase 4 — ownership + role model.
 //
-// This is not yet a per-role/per-owner model (a donor can still see and edit
-// records another donor created) — that's a larger change tracked in
-// IMPLEMENTATION_PLAN.md under later phases. This step closes the one gap
-// that matters regardless of how far the role system goes: nobody outside
-// the app's own signed-in users can touch the data.
+// Phase 1 (see git history) closed the front door: every read/write needs
+// request.auth != null. That was enough to stop the public internet from
+// touching the database, but it left every signed-in user able to read AND
+// WRITE every other user's donations and requests. This revision fixes that:
+// a donor can only create/change/delete their own donation, a requester can
+// only create/change/delete their own request, nobody can grant themselves
+// a role (including admin), and admin-only actions (changing someone else's
+// role, suspending an account, running the cross-donor matching engine) are
+// enforced here, not just hidden in the UI.
+//
+// Design note on the matching engine: `runFulfillment()` in firebase-app.js
+// necessarily mutates OTHER people's donations (decrementing quantity as it
+// allocates) and moves OTHER people's requests between collections. Under a
+// strict per-owner model that can only be a privileged operation, so Phase 4
+// restricts triggering it to admins (see IMPLEMENTATION_PLAN.md) — the admin
+// bypass below (`isAdmin()`) is what makes that legal without reopening
+// cross-owner writes to everyone. This is a documented scope decision, not
+// an oversight.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -16,34 +27,133 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // The signed-in user's own profile document, read once per rule
+    // evaluation. get() on a document that doesn't exist causes the calling
+    // rule to evaluate to false rather than throwing past it, which is the
+    // behavior we want: no profile yet -> no role -> denied.
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function myRole() {
+      return isSignedIn() && myProfile().role;
+    }
+    function isAdmin() {
+      return isSignedIn() && myProfile().role == 'admin';
+    }
+    // Suspended accounts keep read access (so they can see their own history
+    // and know what happened) but lose every write.
+    function isActiveWriter() {
+      return isSignedIn() && myProfile().suspended != true;
+    }
+    function isOwner(data) {
+      return isSignedIn() && data.ownerId == request.auth.uid;
+    }
+    function unchanged(field) {
+      return request.resource.data[field] == resource.data[field];
+    }
+
     // One profile document per signed-in user, created client-side on first
-    // sign-in (see ensureUserProfile in firebase-app.js). A user can read
-    // any profile (needed for displaying names elsewhere in the app) but
-    // can only create/update their own, and can never change their own
-    // `role` field once it's set.
+    // sign-in (see ensureUserProfile in firebase-app.js). Role starts
+    // unset ('member') and is claimed once by the user themself (donor or
+    // requester, never admin — see the claimRole transition below); after
+    // that, only an admin can change it, and never their own.
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update: if isSignedIn() && request.auth.uid == userId
-                    && request.resource.data.role == resource.data.role;
+
+      allow create: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.role == 'member'
+                    && request.resource.data.suspended == false;
+
+      allow update: if isSignedIn() && (
+        // The user claims their own role exactly once, member -> donor or
+        // requester. They can never touch `suspended` themselves, and this
+        // path can never produce 'admin'.
+        (request.auth.uid == userId
+          && resource.data.role == 'member'
+          && request.resource.data.role in ['donor', 'requester']
+          && unchanged('suspended'))
+        ||
+        // The user edits their own non-protected fields (e.g. display info
+        // added later) — role and suspended state must stay exactly as they
+        // were; a user can never grant or revoke their own access this way.
+        (request.auth.uid == userId
+          && unchanged('role')
+          && unchanged('suspended'))
+        ||
+        // An admin manages another user's role/suspension — never their own
+        // account through this path, so an admin can't accidentally (or
+        // maliciously) demote or suspend themselves out of the console, and
+        // "make myself admin" is structurally impossible: the only way to
+        // reach role == 'admin' is an *existing* admin setting it on someone
+        // ELSE's document.
+        (isAdmin() && request.auth.uid != userId)
+      );
+
       allow delete: if false;
     }
 
-    // Operational collections: shared across every signed-in user for now.
+    // Legacy donor registry (one doc per donor "profile" — pre-dates the
+    // users/{uid} role system and is still what donations.donorId points
+    // at). Now ownership-scoped: a donor-role user manages exactly the
+    // donor record(s) they created (ownerId == their uid).
     match /donors/{donorId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isActiveWriter()
+                    && myRole() == 'donor'
+                    && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isActiveWriter()
+                    && (isOwner(resource.data) || isAdmin())
+                    && unchanged('ownerId');
+      allow delete: if isSignedIn() && (isOwner(resource.data) || isAdmin());
     }
+
     match /donations/{donationId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isActiveWriter()
+                    && myRole() == 'donor'
+                    && request.resource.data.ownerId == request.auth.uid;
+      // Owner edits their own donation; admin edits any donation (this is
+      // also the path the matching engine's batch quantity/status updates
+      // use, since it runs as an admin — see the design note above).
+      allow update: if isSignedIn() && isActiveWriter()
+                    && (isOwner(resource.data) || isAdmin())
+                    && unchanged('ownerId');
+      allow delete: if isSignedIn() && (isOwner(resource.data) || isAdmin());
     }
+
+    // Requests carry the requester's uid as ownerId directly on the
+    // document (there's no separate "requesters" registry the way there is
+    // for donors). requests_pending / requests_fulfilled are only ever
+    // written by the matching engine moving a request out of the urgent
+    // queue, which is an admin-triggered action (see design note above) —
+    // so creation there is admin-only, while the ORIGINAL owner is still
+    // preserved as ownerId on the moved document and can read/manage it
+    // afterwards.
     match /requests_urgent/{requestId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isActiveWriter()
+                    && myRole() == 'requester'
+                    && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isActiveWriter()
+                    && (isOwner(resource.data) || isAdmin())
+                    && unchanged('ownerId');
+      allow delete: if isSignedIn() && (isOwner(resource.data) || isAdmin());
     }
     match /requests_pending/{requestId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update: if isSignedIn() && isActiveWriter()
+                    && (isOwner(resource.data) || isAdmin())
+                    && unchanged('ownerId');
+      allow delete: if isSignedIn() && (isOwner(resource.data) || isAdmin());
     }
     match /requests_fulfilled/{requestId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update: if isSignedIn() && isActiveWriter()
+                    && (isOwner(resource.data) || isAdmin())
+                    && unchanged('ownerId');
+      allow delete: if isAdmin();
     }
 
     // Default deny — anything not explicitly listed above is closed.

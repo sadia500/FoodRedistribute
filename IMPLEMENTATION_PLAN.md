@@ -119,13 +119,38 @@ Phases 1 (auth + locked-down rules), 2 (the "Urgent requests waiting" race fixed
 - No audit log of who changed a role or suspended an account (spec §24, explicitly out of scope for this phase).
 - Admin's own role/suspension can never be changed by anyone via the app once they're the only admin — the recovery path (another admin does it, or a direct Firestore Console edit, which bypasses rules) should be documented for whoever runs this for real.
 
-## 7. Phase 5 candidates (not started)
+## 7. Phase 5 — Verification & Audit (done)
 
-In rough order of what most naturally follows Phase 4:
-1. **Verification workflow** for donor/requester accounts (PENDING/APPROVED/REJECTED), since the role system Phase 4 built is the actual prerequisite for it.
-2. **Delivery workflow** — volunteer role, RESERVED→PICKED_UP→DELIVERING→DELIVERED state transitions logged against a request.
-3. **Notifications** — at minimum, a requester learning their request was fulfilled without having to check the dashboard.
-4. **File uploads** (Firebase Storage) for verification documents.
-5. **Audit log**, admin-only, once there's more than role/suspension changes worth logging.
+**Goal:** a controlled verification state machine for donor/requester accounts, plus an audit trail of the security- and business-relevant actions the spec called out — both on top of the Phase 4 role/ownership model, without touching it.
+
+**Verification.** A new `verifications/{uid}` collection, one doc per user. No doc means "unverified" (that state isn't persisted — it's the absence of a submission). A donor or requester submits their own info (business/organization name, registration number, contact phone, address, description) via `submitVerification()`, which creates the doc with `status: 'pending'`; `firestore.rules` forces that status on create, so a user cannot submit themselves as already verified. If rejected, they can resubmit (`rejected` → `pending`) with updated info, but can never touch the admin-owned review fields (`reviewedBy`/`reviewedAt`/`reviewNote`) or set `status` to `verified` themselves — only an admin can move a submission to `verified` or `rejected`, and, mirroring the same self-action guard from Phase 4's role/suspension rules, never their own. Read access is owner-or-admin only, so a verification submission's contact/registration details aren't visible to other donors/requesters browsing the app.
+
+**Admin verification interface.** The Admin page gained a "Pending verifications" section above the existing Users table: each pending submission shows its details (business/org name, registration number, phone, address, description) with Approve and Reject actions. Reject requires a note (enforced client-side, so the account holder always gets a reason) and both actions ask for confirmation before firing. This is in addition to, not a replacement for, the Users table's existing role/suspend controls.
+
+**Audit log.** A new `audit_log` collection, append-only — `firestore.rules` denies update and delete to everyone, including admins, once an entry is written. Every entry must be filed by the person who actually did the thing (`actorId` has to equal the writer's own `uid` — nobody can log an action as someone else) and the action named has to match an authority the writer's role actually backs up (only an admin can file `verification_approved`, only a donor can file `donation_created`, etc. — see `auditActorAuthorized()` in `firestore.rules`). It's admin-read-only. Logging happens from `firebase-app.js`'s `logAction()` helper, called *after* the real write succeeds (never inside the same transaction/batch), and a failed or denied log write is swallowed rather than thrown — an audit-trail bug must never be able to block the feature it's auditing. Every action the spec listed is covered: `user_registered`, `role_assigned` (both the self-claim and admin-assignment paths), `verification_submitted`, `verification_approved`, `verification_rejected`, `account_suspended`/`account_unsuspended`, `donation_created`, `donation_cancelled` (see below), `request_created`, and `match_allocated` (one entry per fulfilled allocation from `runFulfillment`, logged after its batch commits).
+
+**Donation cancellation.** Added `cancelMyDonation()` (owner-only delete, confirmed in the UI before firing) since the audit log's minimum action list required something to actually generate `donation_cancelled` events — there was no cancel action in Phase 4's donor dashboard.
+
+**A stated limitation, not a hidden one:** this audit log is client-stamped, not server-enforced. There's no Cloud Functions layer in this project to be the sole, trusted writer (this is a Firebase Hosting + Firestore-only app by design — see the README). "Tamper-proof" here means nobody can rewrite or delete history, and nobody can file an entry claiming an authority their role doesn't back up — it does not mean a compromised or modified client can never write a spurious entry describing its own real, structurally-permitted actions. A fully tamper-proof trail would move log writes server-side; that's explicitly out of scope for this phase, and is called out again in §8 below.
+
+**Files changed:** `firestore.rules` (added `verifications/{uid}` and `audit_log/{logId}`, both additive — nothing in the Phase 4 rules for `users`/`donations`/`donors`/`requests_*` was touched), `firebase-app.js` (`logAction`, `submitVerification`/`getMyVerification`/`watchMyVerification`, admin `listVerifications`/`setVerificationStatus`, `cancelMyDonation`, plus `logAction()` calls added to the existing registration/role/donation/request/matching functions — all additive, no existing exported function had its signature changed), `FirebaseEdition/index.html` (verification panel on the donor/requester dashboards, "Pending verifications" section on the Admin page, cancel-donation control, confirmation dialogs for suspend/promote-to-admin/reject/cancel), `test/rules.test.js` (23 new Phase 5 cases alongside the 29 from Phase 4 — 52 total), `README.md`.
+
+**Tests.** `npm test` (Phase 3's matching suite): still 13/13, untouched. `npm run test:rules`: **could not be executed in this environment** — same limitation as Phase 4, confirmed again before starting this phase and again just now: `firebase emulators:exec` needs to download the Firestore emulator jar from `storage.googleapis.com` on first use, and this sandbox's network egress policy denies that host (a 403 policy denial at the proxy, not a flake — checked via the proxy's own status log both times). The 52 rules tests (29 ownership/role + 23 verification/audit) are written and reviewed but **unverified by execution**; run `npm run test:rules` on a machine or CI with normal internet access to actually confirm them.
+
+**Known gaps after Phase 5:**
+- Rules tests remain unexecuted in this environment (see above) — re-review once actually run.
+- Audit log has no UI browser yet (only enforced/written, not displayed) — an admin can't currently see the trail from inside the app, only via the Firestore Console.
+- Verification has two states worth adding later: an admin "resend for more info" that isn't a full rejection, and a way to re-review an already-verified account (e.g. if new information comes to light) — current rules only allow reviewing from `pending`.
+- The client-stamped audit log limitation above — a genuinely tamper-proof trail needs a backend.
+- Still no audit log of the log's own denials (i.e. no record of *attempted* unauthorized actions) — only successful, permitted ones are recorded, which is normal for an audit trail but worth naming.
+
+## 8. Phase 6 candidates (not started)
+
+In rough order of what most naturally follows Phase 5:
+1. **Delivery workflow** — volunteer role, RESERVED→PICKED_UP→DELIVERING→DELIVERED state transitions logged against a request (the audit log already has a `match_allocated` action to extend from).
+2. **Notifications** — at minimum, a requester learning their request was fulfilled, or a donor/requester learning their verification was reviewed, without having to check the dashboard.
+3. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
+4. **Audit log viewer** in the Admin UI — the data already exists and is protected; this is a read-only screen over it.
+5. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
 
 Per the original scope note in §0: treat this as a menu, not a mandate — decide which of these (if any) are worth building before starting.

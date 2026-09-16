@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Phase 4 — ownership + role model.
+// Phase 4 Ã¢â‚¬â€ ownership + role model.
 //
 // Phase 1 (see git history) closed the front door: every read/write needs
 // request.auth != null. That was enough to stop the public internet from
@@ -16,7 +16,7 @@ rules_version = '2';
 // necessarily mutates OTHER people's donations (decrementing quantity as it
 // allocates) and moves OTHER people's requests between collections. Under a
 // strict per-owner model that can only be a privileged operation, so Phase 4
-// restricts triggering it to admins (see IMPLEMENTATION_PLAN.md) — the admin
+// restricts triggering it to admins (see IMPLEMENTATION_PLAN.md) Ã¢â‚¬â€ the admin
 // bypass below (`isAdmin()`) is what makes that legal without reopening
 // cross-owner writes to everyone. This is a documented scope decision, not
 // an oversight.
@@ -35,7 +35,7 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     function myRole() {
-      return isSignedIn() && myProfile().role;
+      return isSignedIn() ? myProfile().role : null;
     }
     function isAdmin() {
       return isSignedIn() && myProfile().role == 'admin';
@@ -55,7 +55,7 @@ service cloud.firestore {
     // One profile document per signed-in user, created client-side on first
     // sign-in (see ensureUserProfile in firebase-app.js). Role starts
     // unset ('member') and is claimed once by the user themself (donor or
-    // requester, never admin — see the claimRole transition below); after
+    // requester, never admin Ã¢â‚¬â€ see the claimRole transition below); after
     // that, only an admin can change it, and never their own.
     match /users/{userId} {
       allow read: if isSignedIn();
@@ -74,13 +74,13 @@ service cloud.firestore {
           && unchanged('suspended'))
         ||
         // The user edits their own non-protected fields (e.g. display info
-        // added later) — role and suspended state must stay exactly as they
+        // added later) Ã¢â‚¬â€ role and suspended state must stay exactly as they
         // were; a user can never grant or revoke their own access this way.
         (request.auth.uid == userId
           && unchanged('role')
           && unchanged('suspended'))
         ||
-        // An admin manages another user's role/suspension — never their own
+        // An admin manages another user's role/suspension Ã¢â‚¬â€ never their own
         // account through this path, so an admin can't accidentally (or
         // maliciously) demote or suspend themselves out of the console, and
         // "make myself admin" is structurally impossible: the only way to
@@ -92,7 +92,7 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Legacy donor registry (one doc per donor "profile" — pre-dates the
+    // Legacy donor registry (one doc per donor "profile" Ã¢â‚¬â€ pre-dates the
     // users/{uid} role system and is still what donations.donorId points
     // at). Now ownership-scoped: a donor-role user manages exactly the
     // donor record(s) they created (ownerId == their uid).
@@ -114,7 +114,7 @@ service cloud.firestore {
                     && request.resource.data.ownerId == request.auth.uid;
       // Owner edits their own donation; admin edits any donation (this is
       // also the path the matching engine's batch quantity/status updates
-      // use, since it runs as an admin — see the design note above).
+      // use, since it runs as an admin Ã¢â‚¬â€ see the design note above).
       allow update: if isSignedIn() && isActiveWriter()
                     && (isOwner(resource.data) || isAdmin())
                     && unchanged('ownerId');
@@ -125,7 +125,7 @@ service cloud.firestore {
     // document (there's no separate "requesters" registry the way there is
     // for donors). requests_pending / requests_fulfilled are only ever
     // written by the matching engine moving a request out of the urgent
-    // queue, which is an admin-triggered action (see design note above) —
+    // queue, which is an admin-triggered action (see design note above) Ã¢â‚¬â€
     // so creation there is admin-only, while the ORIGINAL owner is still
     // preserved as ownerId on the moved document and can read/manage it
     // afterwards.
@@ -157,14 +157,14 @@ service cloud.firestore {
     }
 
     // ---- Phase 5: account verification ------------------------------------
-    // One doc per user (verifications/{uid}). No doc yet means "unverified" —
+    // One doc per user (verifications/{uid}). No doc yet means "unverified" Ã¢â‚¬â€
     // that state isn't persisted, it's just the absence of a submission. A
     // donor/requester submits their own (create, status forced to 'pending')
     // and may resubmit after a rejection (update, 'rejected' -> 'pending'),
     // but can never write 'verified' themselves and can never touch the
     // admin-owned review fields (reviewedBy/reviewedAt/reviewNote). Only an
-    // admin can move a submission to 'verified' or 'rejected', and — same
-    // self-action guard as the role/suspension rules above — never their own.
+    // admin can move a submission to 'verified' or 'rejected', and Ã¢â‚¬â€ same
+    // self-action guard as the role/suspension rules above Ã¢â‚¬â€ never their own.
     match /verifications/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
 
@@ -191,9 +191,9 @@ service cloud.firestore {
     }
 
     // ---- Phase 5: audit log -------------------------------------------------
-    // Append-only — nobody, including admins, can update or delete an entry
+    // Append-only Ã¢â‚¬â€ nobody, including admins, can update or delete an entry
     // once it's written. Every entry must be filed by the person who did the
-    // thing (actorId has to equal the writer's own uid — nobody can log an
+    // thing (actorId has to equal the writer's own uid Ã¢â‚¬â€ nobody can log an
     // action as if someone else did it), and the specific action named has
     // to match an authority the writer actually holds (only an admin can
     // file 'verification_approved', only a donor can file 'donation_created',
@@ -203,8 +203,8 @@ service cloud.firestore {
     // one. There's no Cloud Functions layer in this project to be the sole,
     // trusted writer (see IMPLEMENTATION_PLAN.md), so "tamper-proof" here
     // means "nobody can rewrite or delete history, and nobody can claim an
-    // authority — like being an admin — that their own role doesn't back up"
-    // — not "a client can never write a log entry about its own real
+    // authority Ã¢â‚¬â€ like being an admin Ã¢â‚¬â€ that their own role doesn't back up"
+    // Ã¢â‚¬â€ not "a client can never write a log entry about its own real
     // actions that didn't structurally have to happen." A fully tamper-proof
     // trail would move log writes server-side; that's out of scope here.
     function auditActorAuthorized(action) {
@@ -224,9 +224,10 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Default deny — anything not explicitly listed above is closed.
+    // Default deny Ã¢â‚¬â€ anything not explicitly listed above is closed.
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
+

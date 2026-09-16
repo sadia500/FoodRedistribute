@@ -132,6 +132,16 @@
   .tag.partial{ background:#DCE9F2; color:var(--sky); } .tag.admin{ background:#F1DCEA; color:#8A3F73; }
   .tag.donor{ background:#DEEEE1; color:var(--leaf-deep); } .tag.requester{ background:#DCE9F2; color:var(--sky); }
   .tag.member{ background:#EFE9DE; color:var(--ink-soft); } .tag.suspended{ background:#FBE0DA; color:var(--terracotta-deep); }
+  .tag.unverified{ background:#EFE9DE; color:var(--ink-soft); } .tag.verified{ background:#DEEEE1; color:var(--leaf-deep); } .tag.rejected{ background:#FBE0DA; color:var(--terracotta-deep); }
+  .verify-panel{ background:var(--paper); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin-bottom:28px; box-shadow:var(--shadow-sm); }
+  .verify-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:4px; }
+  .verify-head .block-title{ margin-bottom:0; }
+  .verify-note{ font-size:13px; color:var(--ink-soft); margin-top:8px; line-height:1.55; }
+  .verify-note.reject{ color:var(--terracotta-deep); }
+  .detail-row{ background:var(--paper-soft); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:8px 0 16px; font-size:13px; line-height:1.7; }
+  .detail-row dt{ display:inline-block; min-width:150px; font-weight:700; color:var(--ink-soft); }
+  textarea{ background:var(--paper-soft); border:1px solid var(--border); color:var(--ink); padding:10px 12px; border-radius:9px; font-size:13px; font-family:var(--font-ui); resize:vertical; min-height:56px; width:100%; }
+  textarea:focus{ outline:none; border-color:var(--terracotta); background:var(--paper); }
   .role-select{ padding:6px 8px; font-size:12.5px; border-radius:8px; }
   .row-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .row-actions button{ padding:6px 12px; font-size:12px; }
@@ -256,6 +266,7 @@
   <div class="page" id="page-donor">
     <h1>My Donations</h1>
     <p class="page-sub">Log food your organization has available and track what's been claimed by the matching engine.</p>
+    <div class="verify-panel" id="donorVerifyPanel"><div class="empty loading">Loading verification status…</div></div>
     <div class="stat-row" id="donorStatRow">
       <div class="stat"><div class="stat-num sky" id="dStatTotal">–</div><div class="stat-label">Total logged</div></div>
       <div class="stat"><div class="stat-num pending" id="dStatActive">–</div><div class="stat-label">Active / available</div></div>
@@ -294,6 +305,7 @@
   <div class="page" id="page-requester">
     <h1>My Requests</h1>
     <p class="page-sub">Submit food requests for your organization and track their status through the matching engine.</p>
+    <div class="verify-panel" id="requesterVerifyPanel"><div class="empty loading">Loading verification status…</div></div>
     <div class="stat-row" id="reqStatRow">
       <div class="stat"><div class="stat-num sky" id="rStatTotal">–</div><div class="stat-label">Total submitted</div></div>
       <div class="stat"><div class="stat-num urgent" id="rStatUrgent">–</div><div class="stat-label">Waiting (urgent queue)</div></div>
@@ -338,6 +350,12 @@
         <input type="date" id="expireDate" style="max-width:170px;"><button class="secondary" id="expireBtn">Remove all expired stock as of this date</button>
       </div>
       <div id="fulfillResults"></div>
+    </section>
+    <hr class="rule">
+    <section class="block">
+      <div class="block-title">Pending verifications</div>
+      <p class="page-sub" style="margin-bottom:16px;">Donor and requester accounts waiting on a review. Approve grants verified status; reject requires a reason, which the account holder will see.</p>
+      <div id="adminVerificationsList"><div class="empty loading">Loading…</div></div>
     </section>
     <hr class="rule">
     <section class="block">
@@ -455,7 +473,7 @@ async function refreshAll(){
 
   if (myRole === "donor") renderDonorDashboard();
   if (myRole === "requester") renderRequesterDashboard();
-  if (myRole === "admin") renderAdminUsers();
+  if (myRole === "admin") { renderAdminUsers(); renderAdminVerifications(); }
 }
 
 function donationStatusTag(status){
@@ -494,8 +512,26 @@ function renderDonorDashboard(){
     <div class="log-item"><div class="log-main">
       <div><strong>${d.quantity}/${d.originalQuantity}</strong> ${d.foodType}${d.allergenInfo ? ` <span style="color:var(--muted);font-weight:600;">(${d.allergenInfo})</span>` : ""}</div>
       <div class="log-route">Expires ${d.expiryDate}${d.pickupTime ? ` · pickup by ${d.pickupTime.replace("T"," ")}` : ""}${d.location ? ` · ${d.location}` : ""}</div>
-    </div>${donationStatusTag(d.status)}</div>
+    </div>
+    <div class="row-actions">
+      ${donationStatusTag(d.status)}
+      ${d.quantity > 0 && d.status !== "Completed" ? `<button type="button" class="secondary" data-cancel-donation="${d._id}">Cancel</button>` : ""}
+    </div></div>
   `).join("");
+
+  listEl.querySelectorAll("[data-cancel-donation]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Cancel this donation? This can't be undone.")) return;
+      btn.disabled = true; btn.textContent = "Cancelling…";
+      try {
+        await window.FRS.cancelMyDonation(btn.dataset.cancelDonation);
+        await window.FRS.loadAllState(); await refreshAll();
+      } catch (e) {
+        alert(e.message || "Couldn't cancel that donation.");
+        btn.disabled = false; btn.textContent = "Cancel";
+      }
+    });
+  });
 }
 
 // ---- Requester dashboard -----------------------------------------------
@@ -558,7 +594,7 @@ async function renderAdminUsers(){
         <td>${u.suspended ? '<span class="tag suspended">SUSPENDED</span>' : '<span class="tag fulfilled">ACTIVE</span>'}</td>
         <td class="row-actions">
           ${u._id === myUid ? '<span class="hint">This is you</span>' : `
-            <select class="role-select" data-action="role" data-uid="${u._id}">
+            <select class="role-select" data-action="role" data-uid="${u._id}" data-current-role="${u.role || "member"}">
               ${["member","donor","requester","admin"].map(r => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}
             </select>
             <button type="button" class="secondary" data-action="suspend" data-uid="${u._id}" data-suspended="${!!u.suspended}">
@@ -570,19 +606,152 @@ async function renderAdminUsers(){
 
   listEl.querySelectorAll('[data-action="role"]').forEach(sel => {
     sel.addEventListener("change", async () => {
+      const nextRole = sel.value;
+      if (nextRole === "admin" && !confirm("Grant this user admin access? Admins can change roles, suspend accounts, and run the matching engine.")) {
+        sel.value = sel.dataset.currentRole;
+        return;
+      }
       sel.disabled = true;
-      try { await window.FRS.setUserRole(sel.dataset.uid, sel.value); }
-      catch (e) { alert(e.message || "Couldn't change that user's role."); }
+      try { await window.FRS.setUserRole(sel.dataset.uid, nextRole); }
+      catch (e) { alert(e.message || "Couldn't change that user's role."); sel.value = sel.dataset.currentRole; }
       finally { sel.disabled = false; renderAdminUsers(); }
     });
   });
   listEl.querySelectorAll('[data-action="suspend"]').forEach(btn => {
     btn.addEventListener("click", async () => {
-      btn.disabled = true;
       const nextSuspended = btn.dataset.suspended !== "true";
+      if (nextSuspended && !confirm("Suspend this account? They'll keep read access but won't be able to add or change anything until you unsuspend them.")) return;
+      btn.disabled = true;
       try { await window.FRS.setUserSuspended(btn.dataset.uid, nextSuspended); }
       catch (e) { alert(e.message || "Couldn't change that user's status."); }
       finally { renderAdminUsers(); }
+    });
+  });
+}
+
+// ---- Verification (donor/requester submission side) ---------------------
+function verifyTag(status){
+  const s = status || "unverified";
+  const label = { unverified: "UNVERIFIED", pending: "PENDING REVIEW", verified: "VERIFIED", rejected: "NEEDS RESUBMISSION" }[s];
+  return `<span class="tag ${s}">${label}</span>`;
+}
+
+function verifyFormHtml(role, existingInfo){
+  const info = existingInfo || {};
+  const orgLabel = role === "donor" ? "Business / restaurant name" : "Organization name";
+  return `
+    <form class="form-grid verify-form" data-role="${role}">
+      <div class="field full"><label>${orgLabel}</label><input type="text" name="businessName" value="${info.businessName || ""}" required></div>
+      <div class="field"><label>Registration / license number</label><input type="text" name="registrationNumber" value="${info.registrationNumber || ""}" placeholder="Optional"></div>
+      <div class="field"><label>Contact phone</label><input type="text" name="contactPhone" value="${info.contactPhone || ""}" required></div>
+      <div class="field full"><label>Address / location</label><input type="text" name="address" value="${info.address || ""}" required></div>
+      <div class="field full"><label>Description</label><textarea name="description">${info.description || ""}</textarea></div>
+      <div class="field-error field full" data-role-err></div>
+      <div class="actions field full"><button type="submit">Submit for verification</button></div>
+    </form>
+    <div class="msg" data-role-msg></div>`;
+}
+
+function bindVerifyForm(panel, role){
+  const form = panel.querySelector(".verify-form");
+  if (!form) return;
+  const btn = form.querySelector('button[type="submit"]');
+  const original = btn.textContent;
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (btn.disabled) return;
+    const errEl = panel.querySelector("[data-role-err]");
+    const msgEl = panel.querySelector("[data-role-msg]");
+    errEl.textContent = ""; msgEl.textContent = ""; msgEl.className = "msg";
+    const body = Object.fromEntries(new FormData(form).entries());
+    if (!body.businessName.trim() || !body.contactPhone.trim() || !body.address.trim()) {
+      errEl.textContent = "Please fill in the required fields.";
+      return;
+    }
+    btn.disabled = true; btn.textContent = "Submitting…";
+    try {
+      await window.FRS.submitVerification(body);
+      msgEl.textContent = "Submitted — an admin will review it soon."; msgEl.className = "msg ok";
+    } catch (err) {
+      msgEl.textContent = err.message || "Couldn't submit that — please try again."; msgEl.className = "msg err";
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  });
+}
+
+function renderVerifyPanel(panelId, role, verification){
+  const panel = document.getElementById(panelId);
+  const status = verification ? verification.status : "unverified";
+  let body;
+  if (status === "verified") {
+    body = `<div class="verify-head"><div class="block-title">Verification</div>${verifyTag(status)}</div>
+      <p class="verify-note">Your account is verified. Recipients and admins can see this on your profile.</p>`;
+  } else if (status === "pending") {
+    body = `<div class="verify-head"><div class="block-title">Verification</div>${verifyTag(status)}</div>
+      <p class="verify-note">Your submission is waiting on an admin review — this updates automatically once they respond.</p>`;
+  } else if (status === "rejected") {
+    body = `<div class="verify-head"><div class="block-title">Verification</div>${verifyTag(status)}</div>
+      <p class="verify-note reject">${verification.reviewNote ? `An admin sent this back: "${verification.reviewNote}" — update the details below and resubmit.` : "An admin sent this back for changes — update the details below and resubmit."}</p>
+      ${verifyFormHtml(role, verification.info)}`;
+  } else {
+    body = `<div class="verify-head"><div class="block-title">Verification</div>${verifyTag(status)}</div>
+      <p class="verify-note">Verify your account so recipients and admins know you're legitimate. This doesn't block you from using the dashboard in the meantime.</p>
+      ${verifyFormHtml(role, null)}`;
+  }
+  panel.innerHTML = body;
+  bindVerifyForm(panel, role);
+}
+
+// ---- Verification (admin review side) ------------------------------------
+async function renderAdminVerifications(){
+  const listEl = document.getElementById("adminVerificationsList");
+  let all;
+  try { all = await window.FRS.listVerifications(); }
+  catch (e) { listEl.innerHTML = '<div class="empty">Couldn\'t load verification submissions.</div>'; return; }
+  const pending = all.filter(v => v.status === "pending");
+  if (!pending.length) { listEl.innerHTML = '<div class="empty">No verifications waiting on review.</div>'; return; }
+
+  listEl.innerHTML = pending.map(v => `
+    <div class="log-item" style="flex-direction:column; align-items:stretch;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+        <div class="log-main"><strong>${(v.info && v.info.businessName) || v._id}</strong> <span style="color:var(--muted);font-weight:600;">(${v._id})</span></div>
+        ${verifyTag(v.status)}
+      </div>
+      <dl class="detail-row">
+        <div><dt>Registration #</dt> ${(v.info && v.info.registrationNumber) || "—"}</div>
+        <div><dt>Contact phone</dt> ${(v.info && v.info.contactPhone) || "—"}</div>
+        <div><dt>Address</dt> ${(v.info && v.info.address) || "—"}</div>
+        <div><dt>Description</dt> ${(v.info && v.info.description) || "—"}</div>
+      </dl>
+      <div class="field full"><label>Review note (required to reject)</label><textarea data-note-for="${v._id}" placeholder="Why is this being sent back?"></textarea></div>
+      <div class="row-actions" style="margin-top:8px;">
+        <button type="button" data-approve="${v._id}">Approve</button>
+        <button type="button" class="secondary" data-reject="${v._id}">Reject</button>
+      </div>
+    </div>
+  `).join("");
+
+  listEl.querySelectorAll("[data-approve]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const uid = btn.dataset.approve;
+      if (!confirm("Approve this account as verified?")) return;
+      btn.disabled = true;
+      try { await window.FRS.setVerificationStatus(uid, "verified"); }
+      catch (e) { alert(e.message || "Couldn't approve that submission."); }
+      finally { renderAdminVerifications(); }
+    });
+  });
+  listEl.querySelectorAll("[data-reject]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const uid = btn.dataset.reject;
+      const note = listEl.querySelector(`[data-note-for="${uid}"]`).value.trim();
+      if (!note) { alert("Please add a note explaining why, so the account holder knows what to fix."); return; }
+      if (!confirm("Reject this submission and send it back for changes?")) return;
+      btn.disabled = true;
+      try { await window.FRS.setVerificationStatus(uid, "rejected", note); }
+      catch (e) { alert(e.message || "Couldn't reject that submission."); }
+      finally { renderAdminVerifications(); }
     });
   });
 }
@@ -900,8 +1069,11 @@ function friendlyAuthError(err){
   return map[code] || "Something went wrong. Please try again.";
 }
 
+let verificationUnsub = null;
+
 window.FRS.onAuthChange(async user => {
   if (profileUnsub) { profileUnsub(); profileUnsub = null; }
+  if (verificationUnsub) { verificationUnsub(); verificationUnsub = null; }
 
   if (user) {
     document.getElementById("userEmail").textContent = user.email;
@@ -925,6 +1097,15 @@ window.FRS.onAuthChange(async user => {
       applyRoleNavVisibility(role);
       if (!dashboardLoaded) { dashboardLoaded = true; await loadDashboard(); }
       else { await refreshAll(); }
+
+      // Real-time verification status — an admin's approve/reject shows up
+      // immediately in the donor/requester panel without a manual reload.
+      if ((role === "donor" || role === "requester") && !verificationUnsub) {
+        verificationUnsub = window.FRS.watchMyVerification(verification => {
+          const panelId = role === "donor" ? "donorVerifyPanel" : "requesterVerifyPanel";
+          if (document.getElementById(panelId)) renderVerifyPanel(panelId, role, verification);
+        });
+      }
     });
   } else {
     dashboardLoaded = false;

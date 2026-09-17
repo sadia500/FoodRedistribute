@@ -384,6 +384,12 @@
       <div class="block-title">Users</div>
       <div id="adminUsersList"><div class="empty loading">Loading…</div></div>
     </section>
+    <hr class="rule">
+    <section class="block">
+      <div class="block-title">Audit log</div>
+      <p class="page-sub" style="margin-bottom:16px;">The most recent 200 recorded actions, newest first — a client-stamped, append-only trail (see README for what that does and doesn't guarantee).</p>
+      <div id="adminAuditLogList"><div class="empty loading">Loading…</div></div>
+    </section>
   </div>
 
   <div class="page" id="page-route">
@@ -496,7 +502,7 @@ async function refreshAll(){
   if (myRole === "donor") renderDonorDashboard();
   if (myRole === "requester") renderRequesterDashboard();
   if (myRole === "volunteer") renderVolunteerDashboard();
-  if (myRole === "admin") { renderAdminUsers(); renderAdminVerifications(); }
+  if (myRole === "admin") { renderAdminUsers(); renderAdminVerifications(); renderAdminAuditLog(); }
 }
 
 function donationStatusTag(status){
@@ -849,6 +855,35 @@ async function renderAdminVerifications(){
       finally { renderAdminVerifications(); }
     });
   });
+}
+
+// ---- Audit log viewer (Phase 7) -------------------------------------------
+function auditActionLabel(action){
+  return (action || "").replace(/_/g, " ");
+}
+
+function formatAuditTime(ts){
+  if (!ts || typeof ts.toDate !== "function") return "—";
+  return ts.toDate().toLocaleString();
+}
+
+async function renderAdminAuditLog(){
+  const listEl = document.getElementById("adminAuditLogList");
+  let entries;
+  try { entries = await window.FRS.listAuditLog(); }
+  catch (e) { listEl.innerHTML = '<div class="empty">Couldn\'t load the audit log.</div>'; return; }
+  if (!entries.length) { listEl.innerHTML = '<div class="empty">No audit log entries yet.</div>'; return; }
+
+  listEl.innerHTML = `<table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead><tbody>` +
+    entries.map(e => `
+      <tr>
+        <td>${formatAuditTime(e.createdAt)}</td>
+        <td>${e.actorEmail || e.actorId}</td>
+        <td>${auditActionLabel(e.action)}</td>
+        <td>${e.targetType ? `${e.targetType}${e.targetId ? ` (${e.targetId})` : ""}` : "—"}</td>
+      </tr>
+    `).join("") +
+    `</tbody></table>`;
 }
 
 // Guards every form submit so a double-click, a double-tap, or an impatient

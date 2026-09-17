@@ -196,13 +196,23 @@ The other helper functions (`isAdmin()`, `isActiveWriter()`, `isOwner()`) were c
 - No "un-claim" / hand-back path if a volunteer claims a job and can no longer do it — only an admin override can currently move it, there's no self-service release back to `AVAILABLE`.
 - Same client-stamped audit log limitation as Phase 5 — still not backend-enforced.
 
-## 9. Phase 7 candidates (not started)
+## 9. Phase 7 — Audit Log Viewer (done)
 
-In rough order of what most naturally follows Phase 6:
+**Goal:** the audit trail Phase 5 built has been write-only from inside the app since it landed — every action was logged and protected, but nobody could actually see it without opening the Firestore Console. This closes that gap with a read-only screen.
+
+**What it is.** A new "Audit log" section on the Admin page: the most recent 200 entries, newest first, showing when, who (actor email), what action, and what it targeted. No new rules were needed — `audit_log` read was already admin-only (Phase 5), so this is purely a client-side query (`listAuditLog()`, ordered by `createdAt desc`, `limit(200)`) and a table over data that already existed and was already protected.
+
+**Files changed:** `firebase-app.js` (`listAuditLog()`, exported via `window.FRS` — additive, no existing function touched), `FirebaseEdition/index.html` (new "Audit log" section on the Admin page, `renderAdminAuditLog()`), `README.md`. `firestore.rules` and `test/rules.test.js` are untouched — there is no new access path to test, since the read this feature performs was already exercised by the existing "an admin can read the audit log" / "a non-admin cannot read the audit log" cases from Phase 5.
+
+**Tests.** `npm test`: still 13/13, untouched. `npm run test:rules`: still 69/69 — no rules changed, so no new cases were needed; the existing Phase 5 audit-log read tests already cover the access boundary this viewer relies on.
+
+**Known gaps:** capped at 200 entries with no pagination or filtering (by actor, action type, or date range) — fine for a project-scale audit trail, would need addressing before a real high-volume deployment.
+
+## 10. Phase 7 candidates remaining (not started)
+
 1. **Notifications** — at minimum, a requester learning their request was fulfilled, a donor/requester learning their verification was reviewed, or a volunteer learning a new job is available, without having to check the dashboard.
 2. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
-3. **Audit log viewer** in the Admin UI — the data already exists and is protected; this is a read-only screen over it.
-4. **Delivery job release** — let a volunteer hand a claimed job back to `AVAILABLE` if they can no longer do it, rather than needing an admin override.
-5. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
+3. **Delivery job release** — let a volunteer hand a claimed job back to `AVAILABLE` if they can no longer do it, rather than needing an admin override.
+4. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
 
 Per the original scope note in §0: treat this as a menu, not a mandate — decide which of these (if any) are worth building before starting.

@@ -200,6 +200,16 @@ async function listVerifications() {
   return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
 }
 
+// ---- 1e. Admin: audit log viewer (Phase 7) ---------------------------------
+// Read-only over the append-only audit_log collection Phase 5 already
+// writes to and protects (admin-only read, enforced in firestore.rules --
+// this is just a screen over data that already existed). Capped at 200,
+// most recent first, since the log only ever grows.
+async function listAuditLog(limitCount = 200) {
+  const snap = await db.collection("audit_log").orderBy("createdAt", "desc").limit(limitCount).get();
+  return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+}
+
 async function setVerificationStatus(uid, status, reviewNote = "") {
   if (status !== "verified" && status !== "rejected") {
     throw new Error("Status must be 'verified' or 'rejected'.");
@@ -745,7 +755,7 @@ window.FRS = {
   // Verification
   getMyVerification, watchMyVerification, submitVerification,
   // Admin
-  listUsers, setUserRole, setUserSuspended, listVerifications, setVerificationStatus,
+  listUsers, setUserRole, setUserSuspended, listVerifications, setVerificationStatus, listAuditLog,
   // Delivery workflow (Phase 6)
   listAvailableDeliveries, listMyDeliveries, watchDeliveries, claimDelivery, advanceDeliveryStatus,
   // Exposed for the test suite (test/*.test.js) — these are pure/isolated

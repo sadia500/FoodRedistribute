@@ -208,11 +208,47 @@ The other helper functions (`isAdmin()`, `isActiveWriter()`, `isOwner()`) were c
 
 **Known gaps:** capped at 200 entries with no pagination or filtering (by actor, action type, or date range) — fine for a project-scale audit trail, would need addressing before a real high-volume deployment.
 
-## 10. Phase 7 candidates remaining (not started)
+## 10. Phase 7b — Notifications (done)
 
-1. **Notifications** — at minimum, a requester learning their request was fulfilled, a donor/requester learning their verification was reviewed, or a volunteer learning a new job is available, without having to check the dashboard.
-2. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
-3. **Delivery job release** — let a volunteer hand a claimed job back to `AVAILABLE` if they can no longer do it, rather than needing an admin override.
-4. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
+**Goal:** the three moments Phase 6's own gap list called out — a requester learning their request was fulfilled, a donor/requester learning their verification was reviewed, a volunteer learning a new job is open — without anyone having to keep the dashboard open and reload it.
+
+**The `notifications/{id}` collection.** One doc per notification, addressed to a single recipient (`userId`). Same client-stamped trust model as `audit_log` (Phase 5) — not server-enforced, but nobody can claim an authority their own role doesn't back up, and nobody can forge a notification as if it came from someone else's action. All three notification-producing actions in this app already run as an admin (`runFulfillment`, `setVerificationStatus`), so `firestore.rules` gates creation to `isAdmin()`, scoped further by `type`:
+- `request_fulfilled` — any recipient (the requester whose request the matching engine just fulfilled).
+- `verification_reviewed` — any recipient except the admin themself (mirrors the self-review guard already on `verifications/{uid}`).
+- `delivery_available` — recipient must actually hold the `volunteer` role, checked with the same `get()`-based pattern `myProfile()` uses (so an admin can't spam an arbitrary uid pretending it's a volunteer notice).
+
+A recipient can flip their own notification from unread to read (never back, never touch any other field) or delete it outright; nobody, including admins, can read or touch anyone else's inbox.
+
+**Hooked into the actions that already exist, not a new trigger.** `runFulfillment()`'s batch now also creates a `request_fulfilled` notification for the requester and fans a `delivery_available` notification out to every volunteer, for each request it fulfills — all in the same atomic batch as the rest of that run, using one `users` query for the volunteer-uid list (fetched once per run, not once per request). `setVerificationStatus()` fires a `verification_reviewed` notification (best-effort, outside the transaction, same non-blocking shape as `logAction`) after its existing update succeeds.
+
+**UI.** A "Notifications" nav item, visible to everyone (unlike the role-scoped items), with a live unread-count badge. A live `watchMyNotifications()` subscription (mirrors `watchMyProfile`/`watchMyVerification`) keeps both the badge and the notifications page in sync in real time — no manual reload needed to see a new one land. Clicking a notification marks it read; a Dismiss button deletes it.
+
+**Files changed:** `firestore.rules` (added `recipientRole()`, `notifActorAuthorized()`, and the `notifications/{notifId}` match block — additive, nothing existing touched), `firebase-app.js` (`notifyUser()` helper; `watchMyNotifications`/`markNotificationRead`/`deleteNotification`; notification creation added to `runFulfillment()`'s batch and to `setVerificationStatus()` — no existing exported function had its signature changed), `FirebaseEdition/index.html` ("Notifications" nav item + badge, new page, `renderNotifications()`, subscription wired alongside the existing profile/verification watchers), `test/rules.test.js` (13 new Phase 7b cases alongside the 69 from Phase 4/5/6 — 82 total), `README.md`.
+
+**Tests.** `npm test`: still 13/13, untouched. `npm run test:rules`: **82/82 passing** — recipient-only read, admin-only create per-type (including the admin-can't-notify-about-their-own-review guard and the volunteer-role check on `delivery_available`), read-only-flips-forward on update (no un-reading, no touching other fields), and recipient-only update/delete.
+
+**Known gaps after Phase 7b:**
+- In-app only — no email, push, or browser notification; a user only sees these while the app is open on the Notifications page or watching the badge.
+- No notification preferences (can't mute a type) and no read-all / clear-all bulk action, only one at a time.
+- `delivery_available` fans out to every volunteer for every fulfilled request in a run, with no de-duplication if the same volunteer is still looking at an earlier unclaimed job from the same run.
+
+## 11. Phase 7c — Delivery Job Release (done)
+
+**Goal:** the last gap Phase 6 named on its own list — a volunteer who claims a job and then can't do it had no way back except an admin override. This adds a self-service release.
+
+**The rule.** A new `allow update` branch on `deliveries/{deliveryId}`, parallel to the existing claim/advance/admin-override branches: the *assigned* volunteer (`request.auth.uid == resource.data.volunteerId`) can move a job from `RESERVED` back to `AVAILABLE`, clearing `volunteerId` to `null` in the same write, with identity fields still immutable. Deliberately scoped to `RESERVED` only — once a job reaches `PICKED_UP` the volunteer already has the food in hand, and "release back to an anonymous pool" isn't a well-defined state to hand off; an admin override still covers that case, same as any other stuck job past that point.
+
+**Client + UI.** `releaseDelivery()` guards the same restriction client-side before the write (a clearer error message than a raw rules denial) and logs a new `delivery_released` audit action (extends `auditActorAuthorized()`, gated to `myRole() == 'volunteer'`, same shape as the existing two delivery actions). The My Deliveries page gained a "Can't do this — release it" button, shown only while a job is still `RESERVED`, with a confirmation prompt before firing (destructive-ish: another volunteer can immediately claim it).
+
+**Files changed:** `firestore.rules` (new release branch on the `deliveries/{deliveryId}` update rule; extended `auditActorAuthorized()` with `delivery_released` — additive, nothing else touched), `firebase-app.js` (`releaseDelivery()`, exported via `window.FRS` — additive), `FirebaseEdition/index.html` (release button + handler on the my-deliveries list), `test/rules.test.js` (6 new Phase 7c cases alongside the 82 from Phase 4/5/6/7b — 88 total), `README.md`.
+
+**Tests.** `npm test`: still 13/13, untouched. `npm run test:rules`: **88/88 passing** — the assigned volunteer can release from `RESERVED`, a different volunteer cannot, nobody can release a job already `PICKED_UP` or later, `volunteerId` must actually clear to `null` on release (can't release while staying assigned), and a released job can be claimed by a different volunteer than the one who released it.
+
+**Known gaps:** no cap on release/reclaim cycling (a volunteer could claim and release the same job repeatedly) — acceptable at this scale, but worth a rate limit or cooldown before any real deployment.
+
+## 12. Phase 7 candidates remaining (not started)
+
+1. **File uploads** (Firebase Storage) for verification documents — the verification workflow Phase 5 built is the natural place to attach these.
+2. A move to Cloud Functions for anything that currently trusts the client (audit log writes, matching-engine execution, notification writes) — the point at which "no backend server required" stops being true, and worth deciding deliberately rather than drifting into.
 
 Per the original scope note in §0: treat this as a menu, not a mandate — decide which of these (if any) are worth building before starting.

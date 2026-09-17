@@ -27,6 +27,9 @@
   .brand-name{ font-family:var(--font-head); font-size:20px; font-weight:600; line-height:1.25; color:var(--ink); }
   nav{ display:flex; flex-direction:column; margin-top:10px; gap:2px; padding:0 14px; }
   .nav-item{ padding:11px 14px; font-size:14.5px; font-weight:600; color:var(--ink-soft); cursor:pointer; border-radius:10px; transition:color .15s, background .15s; user-select:none; display:flex; align-items:center; gap:10px; }
+  .nav-badge{ margin-left:auto; background:var(--terracotta-deep); color:#fff; font-size:11px; font-weight:700; line-height:1; padding:3px 7px; border-radius:20px; }
+  .notif-item{ opacity:.72; }
+  .notif-item.unread{ opacity:1; border-left:3px solid var(--terracotta-deep); }
   .nav-item .ico{ display:inline-flex; opacity:.8; flex-shrink:0; }
   .nav-item .ico svg{ display:block; transition:transform .18s ease; }
   .nav-item:hover .ico svg{ transform:scale(1.14) rotate(-4deg); }
@@ -213,6 +216,7 @@
   </div>
   <nav>
     <div class="nav-item active" data-page="overview"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg></span>Overview</div>
+    <div class="nav-item" data-page="notifications"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6H4c.5-.5 2-2 2-6Z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg></span>Notifications<span class="nav-badge" id="notifBadge" style="display:none;"></span></div>
     <div class="nav-item" data-page="donor" data-role="donor"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11c0 5 4 8 9 8s9-3 9-8"/><path d="M2 11h20"/></svg></span>My Donations</div>
     <div class="nav-item" data-page="requester" data-role="requester"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 11h8M8 15h5"/></svg></span>My Requests</div>
     <div class="nav-item" data-page="deliveries" data-role="volunteer"><span class="ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M7 17V9l5-5 5 5v8"/><path d="M10 17v-4h4v4"/></svg></span>My Deliveries</div>
@@ -245,6 +249,12 @@
     </div>
     <hr class="rule">
     <section class="block"><div class="block-title">Recent deliveries</div><div id="deliveryLog"><div class="empty loading">Loading…</div></div></section>
+  </div>
+
+  <div class="page" id="page-notifications">
+    <h1>Notifications</h1>
+    <p class="page-sub">Your 50 most recent notifications, newest first. Click one to mark it read.</p>
+    <div id="notificationsList"><div class="empty loading">Loading…</div></div>
   </div>
 
   <div class="page" id="page-donors">
@@ -650,6 +660,7 @@ function renderVolunteerDashboard(){
     </div>
     <div class="row-actions">
       ${deliveryStatusTag(d.status)}
+      ${d.status === "RESERVED" ? `<button type="button" class="secondary" data-release-delivery="${d._id}">Can't do this — release it</button>` : ""}
       ${NEXT_DELIVERY_LABEL[d.status] ? `<button type="button" data-advance-delivery="${d._id}">${NEXT_DELIVERY_LABEL[d.status]}</button>` : ""}
     </div></div>
   `).join("");
@@ -664,6 +675,72 @@ function renderVolunteerDashboard(){
         alert(e.message || "Couldn't update that delivery.");
         btn.disabled = false; btn.textContent = original;
       }
+    });
+  });
+
+  mineEl.querySelectorAll("[data-release-delivery]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Release this job back to the open pool? Another volunteer will be able to claim it.")) return;
+      btn.disabled = true; btn.textContent = "Releasing…";
+      try {
+        await window.FRS.releaseDelivery(btn.dataset.releaseDelivery);
+        await window.FRS.loadAllState(); await refreshAll();
+      } catch (e) {
+        alert(e.message || "Couldn't release that delivery.");
+        btn.disabled = false; btn.textContent = "Can't do this — release it";
+      }
+    });
+  });
+}
+
+// ---- Notifications (Phase 7) ----------------------------------------------
+let myNotifications = [];
+
+function timeAgo(ts){
+  if (!ts || typeof ts.toDate !== "function") return "";
+  const ms = Date.now() - ts.toDate().getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function renderNotifications(list){
+  myNotifications = list;
+  const unread = list.filter(n => !n.read);
+
+  const badge = document.getElementById("notifBadge");
+  if (unread.length) { badge.textContent = unread.length > 9 ? "9+" : String(unread.length); badge.style.display = "inline-block"; }
+  else { badge.style.display = "none"; }
+
+  const listEl = document.getElementById("notificationsList");
+  if (!listEl) return; // page not in the DOM yet on first snapshot
+  if (!list.length) { listEl.innerHTML = '<div class="empty">No notifications yet.</div>'; return; }
+
+  listEl.innerHTML = list.map(n => `
+    <div class="log-item notif-item ${n.read ? "" : "unread"}" data-notif="${n._id}">
+      <div class="log-main"><div>${n.message}</div><div class="log-route">${timeAgo(n.createdAt)}</div></div>
+      <div class="row-actions">
+        ${n.read ? "" : '<span class="tag pending">NEW</span>'}
+        <button type="button" class="secondary" data-delete-notif="${n._id}">Dismiss</button>
+      </div>
+    </div>
+  `).join("");
+
+  listEl.querySelectorAll("[data-notif]").forEach(row => {
+    row.addEventListener("click", async e => {
+      if (e.target.closest("[data-delete-notif]")) return;
+      const id = row.dataset.notif;
+      const n = myNotifications.find(x => x._id === id);
+      if (n && !n.read) { try { await window.FRS.markNotificationRead(id); } catch (err) { /* best-effort */ } }
+    });
+  });
+  listEl.querySelectorAll("[data-delete-notif]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try { await window.FRS.deleteNotification(btn.dataset.deleteNotif); }
+      catch (e) { alert(e.message || "Couldn't dismiss that notification."); }
     });
   });
 }
@@ -1200,10 +1277,12 @@ function friendlyAuthError(err){
 }
 
 let verificationUnsub = null;
+let notificationsUnsub = null;
 
 window.FRS.onAuthChange(async user => {
   if (profileUnsub) { profileUnsub(); profileUnsub = null; }
   if (verificationUnsub) { verificationUnsub(); verificationUnsub = null; }
+  if (notificationsUnsub) { notificationsUnsub(); notificationsUnsub = null; }
 
   if (user) {
     document.getElementById("userEmail").textContent = user.email;
@@ -1228,6 +1307,13 @@ window.FRS.onAuthChange(async user => {
       if (!dashboardLoaded) { dashboardLoaded = true; await loadDashboard(); }
       else { await refreshAll(); }
 
+      // Real-time notifications -- a new delivery job, a fulfilled request,
+      // or a reviewed verification shows up (and updates the badge count)
+      // without a manual reload.
+      if (!notificationsUnsub) {
+        notificationsUnsub = window.FRS.watchMyNotifications(renderNotifications);
+      }
+
       // Real-time verification status — an admin's approve/reject shows up
       // immediately in the donor/requester panel without a manual reload.
       if ((role === "donor" || role === "requester") && !verificationUnsub) {
@@ -1240,6 +1326,7 @@ window.FRS.onAuthChange(async user => {
   } else {
     dashboardLoaded = false;
     myRole = null;
+    myNotifications = [];
     showGate("auth");
     authForm.reset();
   }

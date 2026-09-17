@@ -94,6 +94,13 @@ async function seedDelivery(id, extra = {}) {
     recipientName: "R", ...extra
   }));
 }
+async function seedNotification(id, userId, extra = {}) {
+  await seed(db => db.collection("notifications").doc(id).set({
+    userId, type: "request_fulfilled", message: "Your request was fulfilled.",
+    targetId: "f1", targetType: "request", read: false,
+    createdAt: new Date(), ...extra
+  }));
+}
 
 // ---- signed-out has no access at all ---------------------------------------
 
@@ -450,6 +457,45 @@ test("an admin can move a stuck job as an override", async () => {
   await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "DELIVERING" }));
 });
 
+// ---- Phase 7c: delivery release --------------------------------------------
+
+test("the assigned volunteer can release a still-RESERVED job back to AVAILABLE", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "AVAILABLE", volunteerId: null }));
+});
+
+test("a different volunteer cannot release someone else's claimed job", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedUser("vol2", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol2");
+  await assertFails(db.collection("deliveries").doc("del1").update({ status: "AVAILABLE", volunteerId: null }));
+});
+
+test("a volunteer cannot release a job that's already been picked up", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "PICKED_UP", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").update({ status: "AVAILABLE", volunteerId: null }));
+});
+
+test("releasing a job clears volunteerId -- it can't stay assigned while AVAILABLE", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedDelivery("del1", { status: "RESERVED", volunteerId: "vol1" });
+  const db = asUser("vol1");
+  await assertFails(db.collection("deliveries").doc("del1").update({ status: "AVAILABLE", volunteerId: "vol1" }));
+});
+
+test("a released job can be claimed by a different volunteer", async () => {
+  await seedUser("vol1", "volunteer");
+  await seedUser("vol2", "volunteer");
+  await seedDelivery("del1", { status: "AVAILABLE", volunteerId: null });
+  const db = asUser("vol2");
+  await assertSucceeds(db.collection("deliveries").doc("del1").update({ status: "RESERVED", volunteerId: "vol2" }));
+});
+
 test("a non-admin cannot delete a delivery", async () => {
   await seedUser("vol1", "volunteer");
   await seedDelivery("del1", { status: "DELIVERED", volunteerId: "vol1" });
@@ -462,6 +508,118 @@ test("an admin can delete a delivery", async () => {
   await seedDelivery("del1");
   const db = asUser("admin1");
   await assertSucceeds(db.collection("deliveries").doc("del1").delete());
+});
+
+// ---- Phase 7: notifications --------------------------------------------------
+
+test("a user can read their own notification", async () => {
+  await seedUser("req1", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req1");
+  await assertSucceeds(db.collection("notifications").doc("n1").get());
+});
+
+test("a user cannot read someone else's notification", async () => {
+  await seedUser("req1", "requester");
+  await seedUser("req2", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req2");
+  await assertFails(db.collection("notifications").doc("n1").get());
+});
+
+test("an admin can create a request_fulfilled notification for any recipient", async () => {
+  await seedUser("admin1", "admin");
+  const db = asUser("admin1");
+  await assertSucceeds(db.collection("notifications").doc("n1").set({
+    userId: "req1", type: "request_fulfilled", message: "Fulfilled.",
+    targetId: "f1", targetType: "request", read: false
+  }));
+});
+
+test("a non-admin cannot create a notification for anyone (including themselves)", async () => {
+  await seedUser("req1", "requester");
+  const db = asUser("req1");
+  await assertFails(db.collection("notifications").doc("n1").set({
+    userId: "req1", type: "request_fulfilled", message: "Fulfilled.",
+    targetId: "f1", targetType: "request", read: false
+  }));
+});
+
+test("an admin cannot create a verification_reviewed notification about their own review", async () => {
+  await seedUser("admin1", "admin");
+  const db = asUser("admin1");
+  await assertFails(db.collection("notifications").doc("n1").set({
+    userId: "admin1", type: "verification_reviewed", message: "Reviewed.",
+    targetId: "admin1", targetType: "verification", read: false
+  }));
+});
+
+test("an admin can create a delivery_available notification only for an actual volunteer", async () => {
+  await seedUser("admin1", "admin");
+  await seedUser("vol1", "volunteer");
+  await seedUser("donorA", "donor");
+  const db = asUser("admin1");
+  await assertSucceeds(db.collection("notifications").doc("n1").set({
+    userId: "vol1", type: "delivery_available", message: "New job.",
+    targetId: "del1", targetType: "delivery", read: false
+  }));
+  await assertFails(db.collection("notifications").doc("n2").set({
+    userId: "donorA", type: "delivery_available", message: "New job.",
+    targetId: "del1", targetType: "delivery", read: false
+  }));
+});
+
+test("a notification cannot be created already marked read", async () => {
+  await seedUser("admin1", "admin");
+  const db = asUser("admin1");
+  await assertFails(db.collection("notifications").doc("n1").set({
+    userId: "req1", type: "request_fulfilled", message: "Fulfilled.",
+    targetId: "f1", targetType: "request", read: true
+  }));
+});
+
+test("the recipient can mark their own notification as read", async () => {
+  await seedUser("req1", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req1");
+  await assertSucceeds(db.collection("notifications").doc("n1").update({ read: true }));
+});
+
+test("the recipient cannot flip a read notification back to unread", async () => {
+  await seedUser("req1", "requester");
+  await seedNotification("n1", "req1", { read: true });
+  const db = asUser("req1");
+  await assertFails(db.collection("notifications").doc("n1").update({ read: false }));
+});
+
+test("the recipient cannot change a notification's message or other fields", async () => {
+  await seedUser("req1", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req1");
+  await assertFails(db.collection("notifications").doc("n1").update({ message: "tampered" }));
+});
+
+test("someone other than the recipient cannot mark a notification read", async () => {
+  await seedUser("req1", "requester");
+  await seedUser("req2", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req2");
+  await assertFails(db.collection("notifications").doc("n1").update({ read: true }));
+});
+
+test("the recipient can delete (dismiss) their own notification", async () => {
+  await seedUser("req1", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req1");
+  await assertSucceeds(db.collection("notifications").doc("n1").delete());
+});
+
+test("someone other than the recipient cannot delete a notification", async () => {
+  await seedUser("req1", "requester");
+  await seedUser("req2", "requester");
+  await seedNotification("n1", "req1");
+  const db = asUser("req2");
+  await assertFails(db.collection("notifications").doc("n1").delete());
 });
 
 // ---- Phase 5: verification submission --------------------------------------
@@ -668,6 +826,15 @@ test("a non-volunteer cannot file a delivery audit action", async () => {
   const db = asUser("donorA");
   await assertFails(db.collection("audit_log").add({
     actorId: "donorA", actorEmail: "donorA@example.com", action: "delivery_claimed",
+    targetId: "del1", targetType: "delivery", metadata: {}, createdAt: new Date()
+  }));
+});
+
+test("a volunteer can file the delivery_released audit action", async () => {
+  await seedUser("vol1", "volunteer");
+  const db = asUser("vol1");
+  await assertSucceeds(db.collection("audit_log").add({
+    actorId: "vol1", actorEmail: "vol1@example.com", action: "delivery_released",
     targetId: "del1", targetType: "delivery", metadata: {}, createdAt: new Date()
   }));
 });

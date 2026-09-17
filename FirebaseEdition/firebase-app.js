@@ -47,6 +47,22 @@ async function logAction(action, { targetId = null, targetType = null, metadata 
   }
 }
 
+// Phase 7: best-effort, same shape as logAction above -- a denied/failed
+// notification write must never roll back or block the real action it's
+// describing. Used for single-recipient notifications outside a batch
+// (runFulfillment's own notifications ride in its existing batch instead,
+// since they need to succeed-or-fail atomically with the rest of that run).
+async function notifyUser(userId, type, message, { targetId = null, targetType = null } = {}) {
+  try {
+    await db.collection("notifications").add({
+      userId, type, message, targetId, targetType, read: false,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (e) {
+    console.error("notification write failed (action not blocked):", type, e);
+  }
+}
+
 // ---- 1b. Authentication ----------------------------------------------------
 // Every signed-in user gets a profile document at users/{uid} on first
 // sign-in. Firestore rules (see firestore.rules) require request.auth to be
@@ -210,6 +226,27 @@ async function listAuditLog(limitCount = 200) {
   return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
 }
 
+// ---- 1f. Notifications (Phase 7) -------------------------------------------
+// notifications/{id}, addressed to a single recipient (userId) -- see
+// firestore.rules for exactly who is allowed to create which type. Every
+// signed-in user watches only their own (rules restrict read to
+// resource.data.userId == request.auth.uid, so this query can never surface
+// anyone else's notifications even if the client asked for them).
+function watchMyNotifications(callback) {
+  const uid = auth.currentUser.uid;
+  return db.collection("notifications").where("userId", "==", uid)
+    .orderBy("createdAt", "desc").limit(50)
+    .onSnapshot(snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))));
+}
+
+async function markNotificationRead(notifId) {
+  await db.collection("notifications").doc(notifId).update({ read: true });
+}
+
+async function deleteNotification(notifId) {
+  await db.collection("notifications").doc(notifId).delete();
+}
+
 async function setVerificationStatus(uid, status, reviewNote = "") {
   if (status !== "verified" && status !== "rejected") {
     throw new Error("Status must be 'verified' or 'rejected'.");
@@ -222,6 +259,11 @@ async function setVerificationStatus(uid, status, reviewNote = "") {
   });
   await logAction(status === "verified" ? "verification_approved" : "verification_rejected",
     { targetId: uid, targetType: "verification", metadata: { reviewNote } });
+  await notifyUser(uid, "verification_reviewed",
+    status === "verified"
+      ? "Your verification was approved."
+      : `Your verification was rejected${reviewNote ? `: ${reviewNote}` : "."}`,
+    { targetId: uid, targetType: "verification" });
 }
 
 // ---- 2. DSA structures — same behavior as the C++ classes ------------------
@@ -576,6 +618,11 @@ async function runFulfillment() {
   const batch = db.batch();
   const toDelete = [];
 
+  // Fetched once per run (not once per request) so volunteers only get one
+  // read here regardless of how many requests this run fulfills.
+  const volunteersSnap = await db.collection("users").where("role", "==", "volunteer").get();
+  const volunteerUids = volunteersSnap.docs.map(d => d.id);
+
   while (!urgentPQ.isEmpty()) {
     const r = { ...urgentPQ.top() };
     urgentPQ.pop();
@@ -624,6 +671,24 @@ async function runFulfillment() {
         toLocation: r.location,
         recipientName: r.recipientName,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Phase 7: let the requester know without them having to check the
+      // dashboard, and fan the open job out to every volunteer so they
+      // don't have to keep the My Deliveries page open waiting for one.
+      batch.set(db.collection("notifications").doc(), {
+        userId: r.ownerId, type: "request_fulfilled",
+        message: `Your request for ${r.quantity} ${r.foodType} has been fulfilled.`,
+        targetId: fulfilledRef.id, targetType: "request", read: false,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      volunteerUids.forEach(vUid => {
+        batch.set(db.collection("notifications").doc(), {
+          userId: vUid, type: "delivery_available",
+          message: `New delivery job: ${r.quantity} ${r.foodType}, ${primaryLocation} \u2192 ${r.location}.`,
+          targetId: deliveryRef.id, targetType: "delivery", read: false,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
       });
 
       results.push({
@@ -741,6 +806,19 @@ async function advanceDeliveryStatus(deliveryId) {
     metadata: { from: delivery.status, to: next } });
 }
 
+// Phase 7c: hand a still-unpicked-up job back to the open pool -- only
+// valid from RESERVED (see the matching firestore.rules comment for why
+// PICKED_UP-or-later can't self-release). Self-service, no admin needed.
+async function releaseDelivery(deliveryId) {
+  const delivery = deliveries.find(d => d._id === deliveryId);
+  if (!delivery) throw new Error("Delivery not found.");
+  if (delivery.status !== "RESERVED") {
+    throw new Error("This job can no longer be released back to the pool -- it's already been picked up.");
+  }
+  await db.collection("deliveries").doc(deliveryId).update({ status: "AVAILABLE", volunteerId: null });
+  await logAction("delivery_released", { targetId: deliveryId, targetType: "delivery" });
+}
+
 // Exposed for the page's UI code
 window.FRS = {
   karachiLocations, roadMap, roadEdges, shortestPath,
@@ -756,8 +834,10 @@ window.FRS = {
   getMyVerification, watchMyVerification, submitVerification,
   // Admin
   listUsers, setUserRole, setUserSuspended, listVerifications, setVerificationStatus, listAuditLog,
+  // Notifications (Phase 7)
+  watchMyNotifications, markNotificationRead, deleteNotification,
   // Delivery workflow (Phase 6)
-  listAvailableDeliveries, listMyDeliveries, watchDeliveries, claimDelivery, advanceDeliveryStatus,
+  listAvailableDeliveries, listMyDeliveries, watchDeliveries, claimDelivery, advanceDeliveryStatus, releaseDelivery,
   // Exposed for the test suite (test/*.test.js) — these are pure/isolated
   // enough to unit test directly without a Firestore connection.
   Stack, Queue, PriorityQueue, makeRequest, findMatchingDonations

@@ -234,6 +234,19 @@ service cloud.firestore {
           && request.resource.data.volunteerId == request.auth.uid
           && deliveryIdentityUnchanged())
         ||
+        // Release (Phase 7c): the assigned volunteer can hand a still-
+        // unpicked-up job back to the open pool if they can no longer do
+        // it -- self-service, no admin override needed. Only from
+        // RESERVED: once a job has moved to PICKED_UP, the volunteer
+        // already has the food in hand, and "release" isn't a well-defined
+        // state to hand back to an anonymous pool -- an admin override is
+        // still available for that case, same as any other stuck job.
+        (isActiveWriter() && request.auth.uid == resource.data.volunteerId
+          && deliveryIdentityUnchanged()
+          && resource.data.status == 'RESERVED'
+          && request.resource.data.status == 'AVAILABLE'
+          && request.resource.data.volunteerId == null)
+        ||
         // Sequential progress: only the assigned volunteer, one step at a
         // time, volunteerId itself can never change once claimed.
         (isActiveWriter() && request.auth.uid == resource.data.volunteerId
@@ -277,7 +290,7 @@ service cloud.firestore {
                         'account_suspended', 'account_unsuspended', 'match_allocated'] && isAdmin())
         || (action in ['donation_created', 'donation_cancelled'] && myRole() == 'donor')
         || (action == 'request_created' && myRole() == 'requester')
-        || (action in ['delivery_claimed', 'delivery_status_updated'] && myRole() == 'volunteer')
+        || (action in ['delivery_claimed', 'delivery_status_updated', 'delivery_released'] && myRole() == 'volunteer')
       );
     }
     match /audit_log/{logId} {
@@ -286,6 +299,54 @@ service cloud.firestore {
                     && request.resource.data.actorId == request.auth.uid
                     && auditActorAuthorized(request.resource.data.action);
       allow update, delete: if false;
+    }
+
+    // ---- Phase 7: notifications ---------------------------------------------
+    // One doc per notification, notifications/{id}, addressed to a single
+    // recipient (userId). Same client-stamped trust model as audit_log
+    // (Phase 5) -- not server-enforced, but nobody can claim an authority
+    // their own role doesn't back up, and nobody can forge a notification
+    // as if it came from someone else's action.
+    //
+    // All three notification-producing actions in this app already run as
+    // an admin (runFulfillment, setVerificationStatus -- see the design
+    // note at the top of this file), so creation here is admin-only,
+    // scoped further by type:
+    //   - 'request_fulfilled'    -> any recipient (the requester whose
+    //     request the matching engine just fulfilled).
+    //   - 'verification_reviewed' -> any recipient except the admin
+    //     themself (mirrors the self-review guard on verifications/{uid}).
+    //   - 'delivery_available'   -> recipient must actually hold the
+    //     'volunteer' role (checked with the same get()-based pattern as
+    //     myProfile() above) -- an admin can't spam an arbitrary uid.
+    function recipientRole(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role;
+    }
+    function notifActorAuthorized(type, recipientId) {
+      return (
+        (type == 'request_fulfilled' && isAdmin())
+        || (type == 'verification_reviewed' && isAdmin() && request.auth.uid != recipientId)
+        || (type == 'delivery_available' && isAdmin() && recipientRole(recipientId) == 'volunteer')
+      );
+    }
+    match /notifications/{notifId} {
+      // Only the recipient can read their own notifications -- nobody
+      // browses anyone else's inbox, including admins.
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+                    && notifActorAuthorized(request.resource.data.type, request.resource.data.userId)
+                    && request.resource.data.read == false;
+
+      // The recipient can flip their own notification from unread to read
+      // (never back to unread, never touch anything else about it) or
+      // delete it outright to clear it from their list.
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid
+                    && unchanged('userId') && unchanged('type') && unchanged('message')
+                    && unchanged('targetId') && unchanged('targetType') && unchanged('createdAt')
+                    && resource.data.read == false && request.resource.data.read == true;
+
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // Default deny -- anything not explicitly listed above is closed.
